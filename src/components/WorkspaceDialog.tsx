@@ -1,4 +1,6 @@
 import { useMemo, useState } from "react";
+import { useLoadout } from "../lib/useLoadout";
+import { defaultLabel, loadoutEquip } from "../lib/loadout";
 import { open } from "@tauri-apps/plugin-dialog";
 import { Backdrop } from "./Backdrop";
 import { useT } from "../i18n";
@@ -41,6 +43,10 @@ interface Props {
 
 export function WorkspaceDialog({ availableAgents, shells, onClose }: Props) {
   const { addWorkspace, state } = useStore();
+  const loadout = useLoadout();
+  /** The sidebar folder to file it under; "" for the top level. */
+  const [folderId, setFolderId] = useState("");
+  const folderDefault = state.folders.find((f) => f.id === folderId)?.loadout ?? [];
 
   const [name, setName] = useState("");
   const [cwd, setCwd] = useState("");
@@ -173,8 +179,15 @@ export function WorkspaceDialog({ availableAgents, shells, onClose }: Props) {
       layout,
       agents: assignments,
       shellId,
+      folderId: folderId || null,
     };
     addWorkspace(draft);
+    // Equipped from the folder's default straight away, so the first session
+    // already has the right plugins. Best effort: the offer above the
+    // workspace says so if it did not take.
+    if (loadout.ready && folderDefault.length) {
+      loadoutEquip(cwd, folderDefault).catch(() => undefined);
+    }
     onClose();
   }
 
@@ -270,6 +283,35 @@ export function WorkspaceDialog({ availableAgents, shells, onClose }: Props) {
               </div>
             )}
           </section>
+
+          {state.folders.length > 0 && (
+            <section className="form-row">
+              <label className="form-label" htmlFor="ws-sidebar-folder">
+                {t("create.sidebarFolder")}
+              </label>
+              <select
+                id="ws-sidebar-folder"
+                className="loadout__preset"
+                value={folderId}
+                onChange={(e) => setFolderId(e.target.value)}
+              >
+                <option value="">{t("create.sidebarFolderNone")}</option>
+                {state.folders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+              {loadout.ready && folderDefault.length > 0 && (
+                <span className="form-hint">
+                  {t("loadout.createHint", {
+                    preset: defaultLabel(folderDefault, loadout.presets),
+                  })}
+                </span>
+              )}
+            </section>
+          )}
+
 
           <section className="form-row">
             <label className="form-label" htmlFor="ws-name">

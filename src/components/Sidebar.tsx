@@ -7,6 +7,8 @@ import { FolderIcon, FolderMenu } from "./FolderMenu";
 import { Icon } from "./Icon";
 import { usePlanLimits, useWorkspaceActivity } from "../lib/agentState";
 import type { Workspace, WorkspaceFolder } from "../types";
+import { useLoadout } from "../lib/useLoadout";
+import { defaultLabel } from "../lib/loadout";
 
 interface Props {
   onOpenSettings: () => void;
@@ -52,6 +54,7 @@ export function Sidebar({ onOpenSettings, onNewWorkspace }: Props) {
     moveFolder,
     moveWorkspace,
   } = useStore();
+  const loadout = useLoadout();
   /** Id of the workspace or folder being renamed — ids never collide. */
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -361,6 +364,16 @@ export function Sidebar({ onOpenSettings, onNewWorkspace }: Props) {
           ) : (
             <>
               <span className="folder__name">{folder.name}</span>
+              {loadout.ready && folder.loadout?.length ? (
+                <span
+                  className="folder__loadout"
+                  title={t("loadout.folderChip", {
+                    preset: defaultLabel(folder.loadout, loadout.presets),
+                  })}
+                >
+                  ◆ {folder.loadout.join("+")}
+                </span>
+              ) : null}
               <span className="ws__badge">{items.length}</span>
               <button
                 className="ws__action"

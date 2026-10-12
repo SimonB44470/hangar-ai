@@ -5,6 +5,7 @@ import { buildPresence } from "../../lib/discord";
 import { isMac } from "../../lib/keys";
 import { THEMES } from "../../themes";
 import { DiscordCard } from "./DiscordCard";
+import { LoadoutCard } from "./LoadoutCard";
 import { ShortcutsSettings } from "./ShortcutsSettings";
 import { VoiceCard, VoiceKeyCard } from "./VoiceCard";
 import { voiceUnload } from "../../lib/ipc";
@@ -787,6 +788,40 @@ export function buildCategories(ctx: SettingsContext): SettingCategory[] {
               placeholder: t("settings.voiceVocabularyPlaceholder"),
               onChange: (value) => set("voiceCleanupHint", value),
             },
+          ],
+        },
+      ],
+    },
+
+    {
+      id: "loadout",
+      label: t("settings.catLoadout"),
+      icon: "◆",
+      sections: [
+        {
+          id: "loadout",
+          title: t("settings.loadout"),
+          hint: t("settings.loadoutHint"),
+          items: [
+            {
+              id: "loadoutEnabled",
+              kind: "toggle",
+              label: t("settings.loadoutEnable"),
+              hint: t("settings.loadoutEnableHint"),
+              keywords: "loadout plugins catalogue catalog marketplace addon extension",
+              value: settings.loadoutEnabled,
+              onChange: (value) => set("loadoutEnabled", value),
+            },
+            // Only once switched on: there is nothing to report before.
+            ...(settings.loadoutEnabled
+              ? [
+                  {
+                    id: "loadoutState",
+                    kind: "custom" as const,
+                    render: () => <LoadoutCard t={t} />,
+                  },
+                ]
+              : []),
           ],
         },
       ],

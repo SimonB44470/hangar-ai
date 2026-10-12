@@ -124,6 +124,11 @@ export interface Workspace {
   detached?: boolean;
   /** Where that window last stood, in logical pixels. */
   windowBounds?: WindowBounds | null;
+  /**
+   * The folder's Loadout default this workspace was told "later" about, so the
+   * offer stays quiet until that default changes.
+   */
+  loadoutSnooze?: string | null;
 }
 
 export interface WindowBounds {
@@ -145,6 +150,11 @@ export interface WorkspaceFolder {
   id: string;
   name: string;
   collapsed: boolean;
+  /**
+   * Loadout presets or plugins every workspace filed here should be equipped
+   * with. Absent: no default. Only read while Loadout is enabled.
+   */
+  loadout?: string[];
 }
 
 export type SplitNode =
@@ -243,6 +253,11 @@ export interface Settings {
    * one setting that sends anything out of the machine.
    */
   discordPresence: boolean;
+  /**
+   * The Loadout add-on: a private plugin catalog for Claude Code. Off by
+   * default, so nobody without access sees a tab they cannot use.
+   */
+  loadoutEnabled: boolean;
   /** Name the workspace on Discord. Off keeps the presence generic. */
   discordShowWorkspace: boolean;
   /** Name the agents running. Off only shows how many. */
@@ -331,6 +346,7 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceCleanupHint: "",
   voiceSubmit: false,
   discordPresence: false,
+  loadoutEnabled: false,
   discordShowWorkspace: true,
   discordShowAgents: true,
   discordAppId: "",
