@@ -358,6 +358,14 @@ export function reachable(status: LoadoutStatus): LoadoutStatus {
   };
 }
 
+/**
+ * What a project can be equipped with: everything this account can install but
+ * the core, which is installed for the person and already active everywhere —
+ * it is never in a project's settings, so it would otherwise look not equipped.
+ */
+export const offerable = (status: LoadoutStatus): LoadoutPlugin[] =>
+  reachable(status).plugins.filter((p) => !isCore(idOf(p, status), status));
+
 /** A unit's base stays while another plugin of its unit is equipped: the engine refuses to remove it then. */
 export function heldBase(id: string, equipped: string[], status: LoadoutStatus | null): string | null {
   const plugin = pluginById(id, status);

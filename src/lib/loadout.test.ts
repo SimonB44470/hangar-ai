@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { translate } from "../i18n";
 import {
   catalogsOf,
   coreOnly,
@@ -12,6 +13,7 @@ import {
   loadoutIds,
   missing,
   missingFixes,
+  offerable,
   pick,
   pluggable,
   presetIsEquipped,
@@ -281,6 +283,11 @@ describe("the core", () => {
     expect(isCore("brush@studio", null)).toBe(false);
   });
 
+  it("is never offered, even though no project's settings list it", () => {
+    const status = { ...engine, plugins: engine.plugins.map((p) => ({ ...p, equipped: false })) };
+    expect(offerable(status).map((p) => p.name)).toEqual(["sketch", "brush", "tavern"]);
+  });
+
   it("makes a preset of only the core pointless to offer", () => {
     expect(coreOnly(PRESETS.blank, engine)).toBe(true);
     expect(coreOnly(PRESETS.brush, engine)).toBe(false);
@@ -293,5 +300,18 @@ describe("unit bases", () => {
     expect(heldBase("brush@studio", equipped, engine)).toBe("studio");
     expect(heldBase("brush@studio", ["brush@studio"], engine)).toBe(null);
     expect(heldBase("sketch@studio", equipped, engine)).toBe(null);
+  });
+});
+
+describe("the machine's readiness line", () => {
+  const line = (locale: "en" | "fr", ready: number, total: number) =>
+    translate(locale, "loadout.machine", { n: ready, ready, total });
+
+  it("agrees with the number of ready capabilities, in both languages", () => {
+    expect(line("en", 1, 1)).toBe("This machine: 1 capability ready out of 1");
+    expect(line("en", 0, 3)).toBe("This machine: 0 capabilities ready out of 3");
+    expect(line("fr", 1, 1)).toBe("Cette machine : 1 capacité prête sur 1");
+    expect(line("fr", 0, 2)).toBe("Cette machine : 0 capacité prête sur 2");
+    expect(line("fr", 2, 3)).toBe("Cette machine : 2 capacités prêtes sur 3");
   });
 });

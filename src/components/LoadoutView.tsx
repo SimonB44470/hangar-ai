@@ -17,6 +17,7 @@ import {
   missing,
   missingFixes,
   nameOf,
+  offerable,
   pick,
   heldBase,
   pluggable,
@@ -75,10 +76,11 @@ function ProviderLine({ use, required }: { use: ProviderUse; required: boolean }
   );
 }
 
-function PluginCard({ plugin }: { plugin: LoadoutPlugin }) {
+/** `core`: installed for the person, so always on whatever the project's settings say. */
+function PluginCard({ plugin, core }: { plugin: LoadoutPlugin; core?: boolean }) {
   const t = useT();
   return (
-    <section className={`lo-plugin ${plugin.equipped ? "lo-plugin--equipped" : ""}`}>
+    <section className={`lo-plugin ${plugin.equipped || core ? "lo-plugin--equipped" : ""}`}>
       <header className="lo-plugin__head">
         <h3 className="lo-plugin__name">{plugin.name}</h3>
         <em className="lo-badge lo-badge--unit" title={t("loadout.unitHint")}>
@@ -86,10 +88,10 @@ function PluginCard({ plugin }: { plugin: LoadoutPlugin }) {
         </em>
         {!plugin.access ? (
           <em className="lo-badge lo-badge--muted">🔒 {t("loadout.locked")}</em>
-        ) : plugin.equipped ? (
-          <em className="lo-badge">{t("loadout.equipped")}</em>
+        ) : core ? (
+          <em className="lo-badge">{t("loadout.alwaysOn")}</em>
         ) : (
-          <em className="lo-badge lo-badge--muted">{t("loadout.available")}</em>
+          <em className="lo-badge">{t("loadout.equipped")}</em>
         )}
       </header>
       {plugin.access &&
@@ -396,12 +398,13 @@ export function LoadoutView({ workspace }: Props) {
   const wanted = folderDefault.length ? expand(folderDefault, presets, status) : [];
   const lacking = missing(wanted, equippedIds).filter((id) => !isCore(id, status));
   const plugins = status ? reachable(status).plugins : [];
-  const mine = plugins.filter((p) => equippedIds.includes(idOf(p, status)));
-  const others = plugins.filter((p) => !equippedIds.includes(idOf(p, status)));
+  // The core is always on, so it counts as this project's own and is never offered.
+  const mine = plugins.filter((p) => isCore(idOf(p, status), status) || equippedIds.includes(idOf(p, status)));
+  const others = status ? offerable(status).filter((p) => !equippedIds.includes(idOf(p, status))) : [];
   // Units found on GitHub with no clone here are not in the pyramid: they are offered on their own.
   const toPlug = status ? pluggable(status).filter((u) => !u.local) : [];
   // Readiness of what this project uses; of the whole catalog until it uses something.
-  const scope = mine.length ? mine : plugins;
+  const scope = mine.some((p) => !isCore(idOf(p, status), status)) ? mine : plugins;
   const capabilities = scope.flatMap((p) => (p.access ? p.capabilities : []));
   const readyCount = capabilities.filter((c) => c.ready).length;
   const fixes = status ? missingFixes({ ...status, plugins: scope }) : [];
@@ -604,7 +607,7 @@ export function LoadoutView({ workspace }: Props) {
         {status && (
           <section className={`lo-card lo-machine ${fixes.length ? "lo-machine--warn" : ""}`}>
             <header className="lo-card__head">
-              <h3>{t("loadout.machine", { ready: readyCount, total: capabilities.length })}</h3>
+              <h3>{t("loadout.machine", { n: readyCount, ready: readyCount, total: capabilities.length })}</h3>
             </header>
             {fixes.length > 0 ? (
               <ul className="lo-fixes__list">
@@ -623,24 +626,9 @@ export function LoadoutView({ workspace }: Props) {
         {mine.length > 0 && (
           <div className="loadout__plugins">
             {mine.map((plugin) => (
-              <PluginCard key={idOf(plugin, status)} plugin={plugin} />
+              <PluginCard key={idOf(plugin, status)} plugin={plugin} core={isCore(idOf(plugin, status), status)} />
             ))}
           </div>
-        )}
-
-        {others.length > 0 && (
-          <details className="lo-fold">
-            <summary>
-              <span className="lo-fold__title">
-                {t("loadout.otherPlugins", { n: others.length })}
-              </span>
-            </summary>
-            <div className="loadout__plugins lo-fold__body">
-              {others.map((plugin) => (
-                <PluginCard key={idOf(plugin, status)} plugin={plugin} />
-              ))}
-            </div>
-          </details>
         )}
 
         {prompts && prompts.length > 0 && <PromptsPanel prompts={prompts} />}
