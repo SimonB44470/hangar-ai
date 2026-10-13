@@ -131,6 +131,8 @@ pub fn run() {
             loadout::loadout_project,
             loadout::loadout_migrate,
             loadout::loadout_plug,
+            loadout::loadout_auto_updates,
+            loadout::loadout_set_auto_update,
             notify::notify_send,
             discord::discord_presence_set,
             discord::discord_presence_status,

@@ -13,7 +13,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::git::off_thread;
 
@@ -276,12 +276,194 @@ fn plug_args(repo: &str) -> Result<[&str; 4], String> {
     Ok(["plugin", "marketplace", "add", repo])
 }
 
-/// Plugs a unit discovered on GitHub into Claude Code: adds its repository as
-/// a marketplace, after which the engine lists its plugins.
+/// A marketplace name as Claude Code keys it in `extraKnownMarketplaces`.
+fn is_marketplace_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with(['-', '.'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+}
+
+/// Claude Code's user settings: a marketplace's `autoUpdate` there applies to
+/// every project, those equipped later included.
+fn user_settings() -> Result<PathBuf, String> {
+    dirs::home_dir()
+        .map(|home| home.join(".claude").join("settings.json"))
+        .ok_or_else(|| "no home folder".to_string())
+}
+
+/// The settings file as JSON, `{}` when there is none yet. A file that does not
+/// parse is an error, never an empty object: writing that back would wipe it.
+fn read_settings(path: &Path) -> Result<Value, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(err) => return Err(format!("could not read {}: {err}", path.display())),
+    };
+    match serde_json::from_str::<Value>(&text) {
+        Ok(value) if value.is_object() => Ok(value),
+        _ => Err(format!(
+            "{} is not a JSON object: fix it before changing auto-update",
+            path.display()
+        )),
+    }
+}
+
+/// Writes next to the file then renames over it, so Claude Code never reads
+/// half a settings file. Keys keep their order (serde_json `preserve_order`).
+fn write_settings(path: &Path, settings: &Value) -> Result<(), String> {
+    let text = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())? + "\n";
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let tmp = path.with_extension("json.hangar-tmp");
+    std::fs::write(&tmp, text).map_err(|e| format!("could not write {}: {e}", tmp.display()))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("could not replace {}: {e}", path.display())
+    })
+}
+
+/// Each marketplace's `autoUpdate`, where it is set. Only that key is read:
+/// sources and everything else in the settings stay out of the window.
+fn auto_updates_in(settings: &Value) -> std::collections::BTreeMap<String, bool> {
+    settings
+        .get("extraKnownMarketplaces")
+        .and_then(Value::as_object)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|(name, entry)| {
+                    Some((name.clone(), entry.get("autoUpdate")?.as_bool()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Sets a marketplace's `autoUpdate`, creating its entry with `source` when it
+/// has none. With `keep_explicit`, a value already set (an explicit `false`
+/// above all) is left alone. Touches nothing else; says whether it changed.
+fn set_auto_update(
+    settings: &mut Value,
+    name: &str,
+    source: Option<Value>,
+    on: bool,
+    keep_explicit: bool,
+) -> Result<bool, String> {
+    let root = settings
+        .as_object_mut()
+        .ok_or("settings are not an object")?;
+    let entries = root
+        .entry("extraKnownMarketplaces")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or("extraKnownMarketplaces is not an object")?;
+    if !entries.contains_key(name) {
+        let source = source.ok_or_else(|| format!("no source known for marketplace {name}"))?;
+        entries.insert(name.to_string(), json!({ "source": source }));
+    }
+    let entry = entries
+        .get_mut(name)
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| format!("extraKnownMarketplaces.{name} is not an object"))?;
+    let current = entry.get("autoUpdate").and_then(Value::as_bool);
+    if current == Some(on) || (keep_explicit && current.is_some()) {
+        return Ok(false);
+    }
+    entry.insert("autoUpdate".into(), Value::Bool(on));
+    Ok(true)
+}
+
+/// The core catalog's marketplace name and source (`metadata.loadout.source`
+/// of its marketplace.json), for an entry the user settings do not have yet.
+fn core_marketplace() -> Option<(String, Value)> {
+    let root = script().ok()?.ancestors().nth(4)?.to_path_buf();
+    let text =
+        std::fs::read_to_string(root.join(".claude-plugin").join("marketplace.json")).ok()?;
+    let market: Value = serde_json::from_str(&text).ok()?;
+    let name = market.get("name")?.as_str()?.to_string();
+    let source = market.pointer("/metadata/loadout/source")?.clone();
+    Some((name, source))
+}
+
+/// Where a marketplace comes from: the core's own metadata, or a unit's GitHub
+/// repository as the engine reported it.
+fn source_for(name: &str, repo: Option<&str>) -> Result<Option<Value>, String> {
+    if !is_marketplace_name(name) {
+        return Err(format!("not a marketplace name: {name}"));
+    }
+    if let Some((core, source)) = core_marketplace() {
+        if core == name {
+            return Ok(Some(source));
+        }
+    }
+    match repo {
+        Some(repo) if is_github_repo(repo) => Ok(Some(json!({ "source": "github", "repo": repo }))),
+        Some(repo) => Err(format!("not a GitHub repository: {repo}")),
+        None => Ok(None),
+    }
+}
+
+/// Every Loadout-relevant marketplace's `autoUpdate` from the user settings.
 #[tauri::command]
-pub async fn loadout_plug(repo: String) -> Result<(), String> {
+pub fn loadout_auto_updates() -> Result<std::collections::BTreeMap<String, bool>, String> {
+    Ok(auto_updates_in(&read_settings(&user_settings()?)?))
+}
+
+/// Turns a catalog's auto-update on or off for every project, in the user
+/// settings. `repo` is the unit's `owner/name`, used only when the settings
+/// have no entry for it yet.
+#[tauri::command]
+pub async fn loadout_set_auto_update(
+    marketplace: String,
+    repo: Option<String>,
+    on: bool,
+) -> Result<(), String> {
+    off_thread(move || {
+        let source = source_for(&marketplace, repo.as_deref())?;
+        let path = user_settings()?;
+        let mut settings = read_settings(&path)?;
+        if set_auto_update(&mut settings, &marketplace, source, on, false)? {
+            write_settings(&path, &settings)?;
+        }
+        Ok(())
+    })
+    .await
+}
+
+/// After a unit is plugged in: auto-update on for it and for the core, unless
+/// the person already chose (an explicit `false` stays).
+fn auto_update_by_default(marketplace: &str, repo: &str) -> Result<(), String> {
+    let path = user_settings()?;
+    let mut settings = read_settings(&path)?;
+    let mut changed = set_auto_update(
+        &mut settings,
+        marketplace,
+        source_for(marketplace, Some(repo))?,
+        true,
+        true,
+    )?;
+    if let Some((core, source)) = core_marketplace() {
+        changed |= set_auto_update(&mut settings, &core, Some(source), true, true)?;
+    }
+    if changed {
+        write_settings(&path, &settings)?;
+    }
+    Ok(())
+}
+
+/// Plugs a unit discovered on GitHub into Claude Code: adds its repository as
+/// a marketplace, after which the engine lists its plugins, and turns its
+/// auto-update on (see `auto_update_by_default`).
+#[tauri::command]
+pub async fn loadout_plug(repo: String, marketplace: String) -> Result<(), String> {
     off_thread(move || {
         let args = plug_args(&repo)?;
+        if !is_marketplace_name(&marketplace) {
+            return Err(format!("not a marketplace name: {marketplace}"));
+        }
         crate::path_env::ensure();
         let spawn = |program: &str, prefix: &[&str]| {
             let mut command = Command::new(program);
@@ -311,7 +493,8 @@ pub async fn loadout_plug(repo: String) -> Result<(), String> {
             text.extend_from_slice(&output.stdout);
             return Err(diagnostic(&text));
         }
-        Ok(())
+        auto_update_by_default(&marketplace, &repo)
+            .map_err(|err| format!("plugged in, but auto-update is not set: {err}"))
     })
     .await
 }
@@ -436,6 +619,141 @@ mod tests {
         let removed = block_on(loadout_unequip(cwd.clone(), vec![new_id.into()])).unwrap();
         println!("unequip {}", removed["removed"]);
         assert!(!loadout_project(cwd).unwrap().iter().any(|id| id == new_id));
+    }
+
+    fn github(repo: &str) -> Option<Value> {
+        Some(json!({ "source": "github", "repo": repo }))
+    }
+
+    #[test]
+    fn auto_update_is_read_only_where_set() {
+        let settings = json!({ "extraKnownMarketplaces": {
+            "studio": { "source": { "source": "github", "repo": "acme/loadout-studio" }, "autoUpdate": true },
+            "crew": { "source": { "source": "github", "repo": "acme/loadout-crew" }, "autoUpdate": false },
+            "other": { "source": { "source": "github", "repo": "x/y" } }
+        }});
+        let found = auto_updates_in(&settings);
+        assert_eq!(found.get("studio"), Some(&true));
+        assert_eq!(found.get("crew"), Some(&false));
+        assert!(!found.contains_key("other"));
+        assert!(auto_updates_in(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn auto_update_creates_the_entry_and_touches_nothing_else() {
+        let mut settings = json!({ "theme": "dark", "permissions": { "allow": ["Bash(ls)"] } });
+        assert!(set_auto_update(
+            &mut settings,
+            "crew",
+            github("acme/loadout-crew"),
+            true,
+            false
+        )
+        .unwrap());
+        assert_eq!(
+            settings,
+            json!({
+                "theme": "dark",
+                "permissions": { "allow": ["Bash(ls)"] },
+                "extraKnownMarketplaces": { "crew": {
+                    "source": { "source": "github", "repo": "acme/loadout-crew" },
+                    "autoUpdate": true
+                }}
+            })
+        );
+        // Off again: the entry and its source stay.
+        assert!(set_auto_update(&mut settings, "crew", None, false, false).unwrap());
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["crew"]["autoUpdate"],
+            false
+        );
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["crew"]["source"]["repo"],
+            "acme/loadout-crew"
+        );
+        // Unchanged: nothing to write.
+        assert!(!set_auto_update(&mut settings, "crew", None, false, false).unwrap());
+        // No entry and no source: refused rather than half-written.
+        assert!(set_auto_update(&mut settings, "guild", None, true, false).is_err());
+    }
+
+    #[test]
+    fn the_default_keeps_an_explicit_choice() {
+        let mut settings = json!({ "extraKnownMarketplaces": {
+            "crew": { "source": { "source": "github", "repo": "acme/loadout-crew" }, "autoUpdate": false }
+        }});
+        assert!(!set_auto_update(&mut settings, "crew", None, true, true).unwrap());
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["crew"]["autoUpdate"],
+            false
+        );
+        assert!(set_auto_update(
+            &mut settings,
+            "studio",
+            github("acme/loadout-studio"),
+            true,
+            true
+        )
+        .unwrap());
+        assert_eq!(
+            settings["extraKnownMarketplaces"]["studio"]["autoUpdate"],
+            true
+        );
+    }
+
+    #[test]
+    fn settings_are_written_whole_and_in_order() {
+        let dir = std::env::temp_dir().join(format!("hangar-loadout-{}", uuid::Uuid::new_v4()));
+        let path = dir.join("settings.json");
+        assert_eq!(read_settings(&path).unwrap(), json!({}));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(&path, "{ \"zeta\": 1, \"alpha\": { \"b\": 2, \"a\": 1 } }").unwrap();
+        let mut settings = read_settings(&path).unwrap();
+        set_auto_update(
+            &mut settings,
+            "crew",
+            github("acme/loadout-crew"),
+            true,
+            false,
+        )
+        .unwrap();
+        write_settings(&path, &settings).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            text.find("zeta").unwrap() < text.find("alpha").unwrap(),
+            "{text}"
+        );
+        assert!(
+            text.find("\"b\"").unwrap() < text.find("\"a\"").unwrap(),
+            "{text}"
+        );
+        assert!(text.ends_with("}\n"));
+        assert!(!path.with_extension("json.hangar-tmp").exists());
+
+        std::fs::write(&path, "{ not json").unwrap();
+        assert!(read_settings(&path).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn only_a_plain_marketplace_name_is_written() {
+        assert!(is_marketplace_name("crew"));
+        assert!(is_marketplace_name("acme-tools.v2"));
+        for bad in ["", "-x", ".x", "a/b", "a b", "a\"b"] {
+            assert!(!is_marketplace_name(bad), "{bad}");
+            assert!(source_for(bad, None).is_err(), "{bad}");
+        }
+        assert!(source_for("crew", Some("not a repo")).is_err());
+        assert_eq!(source_for("crew", None).unwrap(), None);
+    }
+
+    /// Read-only: prints each marketplace's `autoUpdate` from this machine's
+    /// user settings, the state the toggles show.
+    /// `cargo test --lib loadout::tests::this_machine -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn this_machine_s_auto_updates() {
+        println!("{:?}", loadout_auto_updates().unwrap());
     }
 
     #[test]

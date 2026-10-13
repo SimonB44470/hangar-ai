@@ -4720,6 +4720,21 @@ body.is-dragging-pane .board-dock__grip {
   font-size: calc(11.5px * var(--ui-scale));
 }
 
+.lo-tier__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+  color: var(--fg-subtle);
+  font-size: calc(11.5px * var(--ui-scale));
+  cursor: pointer;
+}
+
+.lo-tier__auto input {
+  margin: 0;
+  cursor: pointer;
+}
+
 .lo-tier__plugins {
   margin: 0;
   padding: 0;

@@ -129,8 +129,22 @@ export const loadoutEquip = (cwd: string, names: string[]) =>
 /** Moves the project's old `<plugin>@loadout` entries to their unit's catalog (`equip` with no names). */
 export const loadoutMigrate = (cwd: string) => invoke<EquipReport>("loadout_migrate", { cwd });
 
-/** Adds a unit's repository (`owner/name`) to Claude Code's marketplaces. */
-export const loadoutPlug = (repo: string) => invoke<void>("loadout_plug", { repo });
+/**
+ * Adds a unit's repository (`owner/name`) to Claude Code's marketplaces, under
+ * its catalog's name, and turns its auto-update on unless the person chose otherwise.
+ */
+export const loadoutPlug = (repo: string, marketplace: string) =>
+  invoke<void>("loadout_plug", { repo, marketplace });
+
+/** Each marketplace's `autoUpdate` in the user's Claude Code settings, where it is set. */
+export const loadoutAutoUpdates = () => invoke<Record<string, boolean>>("loadout_auto_updates");
+
+/**
+ * Turns a catalog's auto-update on or off for every project (user settings).
+ * `repo` creates the marketplace entry when the settings have none yet.
+ */
+export const loadoutSetAutoUpdate = (marketplace: string, repo: string | null, on: boolean) =>
+  invoke<void>("loadout_set_auto_update", { marketplace, repo, on });
 
 export interface UnequipReport {
   file: string;
@@ -404,4 +418,22 @@ export function pyramidOf(status: LoadoutStatus): { core: UnitBlock | null; unit
   const core = blocks.get("core") ?? null;
   blocks.delete("core");
   return { core, units: [...blocks.values()].sort((x, y) => x.unit.localeCompare(y.unit)) };
+}
+
+/** The marketplace a unit's auto-update toggle writes, and the repository to declare it from. */
+export interface AutoUpdateTarget {
+  marketplace: string;
+  /** `null` for the core: the backend knows its source. */
+  repo: string | null;
+}
+
+/**
+ * What a tile's toggle switches: the core's marketplace, or a unit's once it is
+ * added to Claude Code. A unit only cloned or found on GitHub has nothing that
+ * updates yet (plugging it in turns auto-update on), and an engine without unit
+ * catalogs gives nothing to point at.
+ */
+export function autoUpdateTarget(block: UnitBlock, status: LoadoutStatus, core: boolean): AutoUpdateTarget | null {
+  if (core) return { marketplace: status.catalog, repo: null };
+  return block.info?.added ? { marketplace: block.info.catalog, repo: block.info.repo } : null;
 }

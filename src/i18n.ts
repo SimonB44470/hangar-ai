@@ -684,6 +684,8 @@ const en = {
   "loadout.plugging": "Plugging in…",
   "loadout.plugHint": "Adds {repo} to Claude Code's marketplaces, so its plugins install here",
   "loadout.pluggedNotice": "{unit} is plugged in: its plugins are listed below.",
+  "loadout.autoUpdate": "Auto-update",
+  "loadout.autoUpdateHint": "Claude Code refreshes this catalog in the background and updates its installed plugins, in every project",
   "loadout.discoveryOff": "GitHub not reachable (gh missing or signed out): only the units already on this machine are shown.",
   "loadout.offerLegacy": "Loadout: this project uses old plugin ids ({plugins}). Update them so its units load.",
 
@@ -1473,6 +1475,8 @@ const fr: Record<Key, string> = {
   "loadout.plugging": "Branchement…",
   "loadout.plugHint": "Ajoute {repo} aux marketplaces de Claude Code, pour que ses plugins s'installent ici",
   "loadout.pluggedNotice": "{unit} est branchée : ses plugins sont listés plus bas.",
+  "loadout.autoUpdate": "Mise à jour auto",
+  "loadout.autoUpdateHint": "Claude Code rafraîchit ce catalogue en arrière-plan et met à jour ses plugins installés, dans tous les projets",
   "loadout.discoveryOff": "GitHub injoignable (gh absent ou déconnecté) : seules les unités déjà sur cette machine sont affichées.",
   "loadout.offerLegacy": "Loadout : ce projet utilise d'anciens identifiants de plugins ({plugins}). Mets-les à jour pour que ses unités se chargent.",
 

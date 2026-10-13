@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import {
+  autoUpdateTarget,
   catalogsOf,
   coreOnly,
   expand,
@@ -8,8 +9,10 @@ import {
   legacyIds,
   loadoutEquip,
   loadoutIds,
+  loadoutAutoUpdates,
   loadoutMigrate,
   loadoutPlug,
+  loadoutSetAutoUpdate,
   loadoutUnequip,
   loadoutProject,
   loadoutPrompts,
@@ -31,6 +34,7 @@ import {
   type UnitBlock,
   type LoadoutPlugin,
   type LoadoutStatus,
+  type AutoUpdateTarget,
   type LoadoutUnit,
   type ProviderUse,
 } from "../lib/loadout";
@@ -170,19 +174,32 @@ function PlugButton({ unit, busy, onPlug }: { unit: LoadoutUnit; busy: boolean; 
 }
 
 /** A unit out of reach is never listed, so a tile has no lock; one found on GitHub but not added offers "plug in". */
+/** The pyramid's auto-update state: `null` when the user settings could not be read, and then no toggle shows. */
+interface AutoUpdates {
+  state: Record<string, boolean> | null;
+  /** The marketplace being written. */
+  busy: string | null;
+  onToggle: (target: AutoUpdateTarget, on: boolean) => void;
+}
+
 function UnitTile({
   block,
   base,
   plugging,
   onPlug,
+  target,
+  auto,
 }: {
   block: UnitBlock;
   base?: boolean;
   plugging?: string | null;
   onPlug?: (unit: LoadoutUnit) => void;
+  target?: AutoUpdateTarget | null;
+  auto?: AutoUpdates;
 }) {
   const t = useT();
   const plug = block.info?.discovered && !block.info.added ? block.info : null;
+  const autoState = auto?.state;
   return (
     <section className={`lo-tier ${base ? "lo-tier--base" : ""}`} title={t("loadout.unitOpen")}>
       <header className="lo-tier__head">
@@ -191,6 +208,17 @@ function UnitTile({
         </span>
         <span className="lo-tier__who">{base ? t("loadout.tierCore") : t("loadout.tierUnit")}</span>
         {plug && onPlug && <PlugButton unit={plug} busy={plugging === plug.unit} onPlug={onPlug} />}
+        {target && auto && autoState && (
+          <label className="lo-tier__auto" title={t("loadout.autoUpdateHint")}>
+            <input
+              type="checkbox"
+              checked={autoState[target.marketplace] === true}
+              disabled={auto.busy === target.marketplace}
+              onChange={(e) => auto.onToggle(target, e.target.checked)}
+            />
+            {t("loadout.autoUpdate")}
+          </label>
+        )}
       </header>
       <ul className="lo-tier__plugins">
         {block.plugins.map((plugin) => (
@@ -219,10 +247,12 @@ function UnitsPyramid({
   status,
   plugging,
   onPlug,
+  auto,
 }: {
   status: LoadoutStatus;
   plugging: string | null;
   onPlug: (unit: LoadoutUnit) => void;
+  auto: AutoUpdates;
 }) {
   const t = useT();
   const { core, units } = pyramidOf(status);
@@ -236,11 +266,18 @@ function UnitsPyramid({
         {units.length > 0 && (
           <div className="lo-pyramid__units" style={{ gridTemplateColumns: units.map((u) => `${Math.max(1, u.plugins.length)}fr`).join(" ") }}>
             {units.map((block) => (
-              <UnitTile key={block.unit} block={block} plugging={plugging} onPlug={onPlug} />
+              <UnitTile
+                key={block.unit}
+                block={block}
+                plugging={plugging}
+                onPlug={onPlug}
+                target={autoUpdateTarget(block, status, false)}
+                auto={auto}
+              />
             ))}
           </div>
         )}
-        {core && <UnitTile block={core} base />}
+        {core && <UnitTile block={core} base target={autoUpdateTarget(core, status, true)} auto={auto} />}
       </div>
     </details>
   );
@@ -275,6 +312,9 @@ export function LoadoutView({ workspace }: Props) {
   const [projectIds, setProjectIds] = useState<string[]>([]);
   /** The unit being plugged in. */
   const [plugging, setPlugging] = useState<string | null>(null);
+  /** Each marketplace's auto-update, from the user settings; `null` when unreadable. */
+  const [autoUpdates, setAutoUpdates] = useState<Record<string, boolean> | null>(null);
+  const [toggling, setToggling] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [extra, setExtra] = useState("");
@@ -289,6 +329,9 @@ export function LoadoutView({ workspace }: Props) {
     loadoutProject(cwd)
       .then(setProjectIds)
       .catch(() => undefined);
+    loadoutAutoUpdates()
+      .then(setAutoUpdates)
+      .catch(() => setAutoUpdates(null));
     loadoutStatus(cwd)
       .then((next) => {
         lastStatus.set(cwd, next);
@@ -365,11 +408,24 @@ export function LoadoutView({ workspace }: Props) {
     }
   }
 
+  async function toggleAutoUpdate(target: AutoUpdateTarget, on: boolean) {
+    setToggling(target.marketplace);
+    setError(null);
+    try {
+      await loadoutSetAutoUpdate(target.marketplace, target.repo, on);
+      setAutoUpdates(await loadoutAutoUpdates());
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setToggling(null);
+    }
+  }
+
   async function plug(unit: LoadoutUnit) {
     setPlugging(unit.unit);
     setError(null);
     try {
-      await loadoutPlug(unit.repo);
+      await loadoutPlug(unit.repo, unit.catalog);
       setNotice(t("loadout.pluggedNotice", { unit: unit.label || unit.unit }));
       refresh();
     } catch (err) {
@@ -602,7 +658,14 @@ export function LoadoutView({ workspace }: Props) {
 
         {!status && !error && <p className="loadout__none">{t("loadout.firstCheck")}</p>}
 
-        {status && <UnitsPyramid status={status} plugging={plugging} onPlug={plug} />}
+        {status && (
+          <UnitsPyramid
+            status={status}
+            plugging={plugging}
+            onPlug={plug}
+            auto={{ state: autoUpdates, busy: toggling, onToggle: toggleAutoUpdate }}
+          />
+        )}
 
         {status && (
           <section className={`lo-card lo-machine ${fixes.length ? "lo-machine--warn" : ""}`}>

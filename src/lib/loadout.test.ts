@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { translate } from "../i18n";
 import {
+  autoUpdateTarget,
   catalogsOf,
   coreOnly,
   defaultLabel,
@@ -313,5 +314,20 @@ describe("the machine's readiness line", () => {
     expect(line("fr", 1, 1)).toBe("Cette machine : 1 capacité prête sur 1");
     expect(line("fr", 0, 2)).toBe("Cette machine : 0 capacité prête sur 2");
     expect(line("fr", 2, 3)).toBe("Cette machine : 2 capacités prêtes sur 3");
+  });
+});
+
+describe("the auto-update toggle", () => {
+  it("writes the core's marketplace on the core tile, and an added unit's with its repository", () => {
+    const { core, units } = pyramidOf(engine);
+    expect(autoUpdateTarget(core!, engine, true)).toEqual({ marketplace: "loadout", repo: null });
+    const studio = units.find((u) => u.unit === "studio")!;
+    expect(autoUpdateTarget(studio, engine, false)).toEqual({ marketplace: "studio", repo: "ORG/loadout-studio" });
+  });
+
+  it("is absent for a unit Claude Code has not added, and for single-catalog engines", () => {
+    const crew = pyramidOf(engine).units.find((u) => u.unit === "crew")!;
+    expect(autoUpdateTarget(crew, engine, false)).toBe(null);
+    expect(autoUpdateTarget({ unit: "studio", plugins: [] }, engine, false)).toBe(null);
   });
 });
