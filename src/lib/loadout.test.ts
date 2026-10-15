@@ -3,6 +3,8 @@ import { translate } from "../i18n";
 import {
   autoUpdateTarget,
   catalogsOf,
+  catalogsToPull,
+  keepDiscovered,
   coreOnly,
   defaultLabel,
   expand,
@@ -329,5 +331,28 @@ describe("the auto-update toggle", () => {
     const crew = pyramidOf(engine).units.find((u) => u.unit === "crew")!;
     expect(autoUpdateTarget(crew, engine, false)).toBe(null);
     expect(autoUpdateTarget({ unit: "studio", plugins: [] }, engine, false)).toBe(null);
+  });
+});
+
+describe("re-checking the catalogs", () => {
+  it("pulls only the Loadout catalogs set to auto-update", () => {
+    const autos = { loadout: true, studio: true, crew: false, elsewhere: true };
+    expect(catalogsToPull(autos, engine, {})).toEqual(["loadout", "studio"]);
+    expect(catalogsToPull(null, engine, {})).toEqual([]);
+    // Before any status, the presets name the catalogs.
+    expect(catalogsToPull(autos, null, PRESETS)).toEqual(["loadout", "studio"]);
+  });
+
+  it("keeps the units GitHub found while the offline status draws first", () => {
+    const local: LoadoutStatus = { ...engine, discovery: "skipped", units: engine.units!.map((u) => ({ ...u, discovered: false })).filter((u) => u.unit !== "guild") };
+    const kept = keepDiscovered(local, engine);
+    expect(kept.discovery).toBe("github");
+    expect(kept.units!.map((u) => [u.unit, u.discovered])).toEqual([
+      ["studio", true],
+      ["crew", false],
+      ["guild", true],
+    ]);
+    expect(keepDiscovered(local, null)).toBe(local);
+    expect(keepDiscovered(local, { ...engine, discovery: "unavailable" })).toBe(local);
   });
 });

@@ -1,11 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   autoUpdateTarget,
   catalogsOf,
+  catalogsToPull,
   coreOnly,
   expand,
   idOf,
   isCore,
+  keepDiscovered,
   legacyIds,
   loadoutEquip,
   loadoutIds,
@@ -13,6 +15,7 @@ import {
   loadoutMigrate,
   loadoutPlug,
   loadoutSetAutoUpdate,
+  loadoutUpdateMarketplace,
   loadoutUnequip,
   loadoutProject,
   loadoutPrompts,
@@ -38,7 +41,7 @@ import {
   type LoadoutUnit,
   type ProviderUse,
 } from "../lib/loadout";
-import { useLoadout } from "../lib/useLoadout";
+import { reloadPresets, useLoadout } from "../lib/useLoadout";
 import { useStore } from "../store";
 import { useLocale, useT } from "../i18n";
 import type { Workspace } from "../types";
@@ -55,6 +58,11 @@ interface Props {
  * seconds.
  */
 const lastStatus = new Map<string, LoadoutStatus>();
+
+/** Back on the window after this long, the tab checks again (locally: no pull, no GitHub). */
+const FOCUS_RECHECK_MS = 60_000;
+/** While the tab stays open, the auto-updated catalogs are pulled this often. */
+const PERIODIC_PULL_MS = 30 * 60_000;
 
 const STATE_GLYPH: Record<ProviderUse["state"], string> = {
   ok: "✓",
@@ -245,11 +253,14 @@ function UnitTile({
 /** What each unit holds, as a pyramid: the core everyone stands on, the private units on top. */
 function UnitsPyramid({
   status,
+  busy,
   plugging,
   onPlug,
   auto,
 }: {
   status: LoadoutStatus;
+  /** A check is running: the pyramid dims until it lands. */
+  busy: boolean;
   plugging: string | null;
   onPlug: (unit: LoadoutUnit) => void;
   auto: AutoUpdates;
@@ -257,7 +268,7 @@ function UnitsPyramid({
   const t = useT();
   const { core, units } = pyramidOf(status);
   return (
-    <details className="lo-fold" open>
+    <details className={`lo-fold ${busy ? "is-busy" : ""}`} open>
       <summary>
         <span className="lo-fold__title">{t("loadout.pyramid")}</span>
         <span className="lo-fold__sub">{t("loadout.pyramidHint")}</span>
@@ -316,6 +327,16 @@ export function LoadoutView({ workspace }: Props) {
   const [autoUpdates, setAutoUpdates] = useState<Record<string, boolean> | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  /** Catalogs being pulled right now, and the ones that failed, with why. */
+  const [pulling, setPulling] = useState<string[]>([]);
+  const [pullErrors, setPullErrors] = useState<Record<string, string>>({});
+  /** The local status is in; GitHub is still being asked which units this account can read. */
+  const [discovering, setDiscovering] = useState(false);
+  /** Each check supersedes the one before: a slower old answer must not land over a newer one. */
+  const generation = useRef(0);
+  const lastCheck = useRef(0);
+  const presetsRef = useRef(presets);
+  presetsRef.current = presets;
   const [error, setError] = useState<string | null>(null);
   const [extra, setExtra] = useState("");
   const [equipping, setEquipping] = useState(false);
@@ -323,36 +344,86 @@ export function LoadoutView({ workspace }: Props) {
   /** `null` until known, and for an engine without prompts: no panel either way. */
   const [prompts, setPrompts] = useState<LoadoutPrompt[] | null>(null);
 
-  const refresh = useCallback(() => {
-    setChecking(true);
-    setError(null);
-    loadoutProject(cwd)
-      .then(setProjectIds)
-      .catch(() => undefined);
-    loadoutAutoUpdates()
-      .then(setAutoUpdates)
-      .catch(() => setAutoUpdates(null));
-    loadoutStatus(cwd)
-      .then((next) => {
-        lastStatus.set(cwd, next);
-        setStatus(next);
-      })
-      .catch((err) => setError(String(err)))
-      .finally(() => setChecking(false));
-  }, [cwd]);
+  /**
+   * Reads everything again. `pull` first pulls the catalogs set to auto-update
+   * (in parallel, each reporting on its own): the engine reads Claude Code's
+   * marketplace clones, which otherwise only move when a new session starts.
+   * Then the local status draws at once and the GitHub one fills in after.
+   */
+  const refresh = useCallback(
+    async (pull = false) => {
+      const run = ++generation.current;
+      const live = () => run === generation.current;
+      lastCheck.current = Date.now();
+      setChecking(true);
+      setError(null);
+      loadoutProject(cwd)
+        .then((ids) => live() && setProjectIds(ids))
+        .catch(() => undefined);
+      const autos = await loadoutAutoUpdates().catch(() => null);
+      if (!live()) return;
+      setAutoUpdates(autos);
+      if (pull) {
+        const names = catalogsToPull(autos, lastStatus.get(cwd) ?? null, presetsRef.current);
+        setPullErrors({});
+        setPulling(names);
+        await Promise.all(
+          names.map((name) =>
+            loadoutUpdateMarketplace(name)
+              .catch((err) => live() && setPullErrors((all) => ({ ...all, [name]: String(err) })))
+              .finally(() => live() && setPulling((left) => left.filter((n) => n !== name))),
+          ),
+        );
+        if (!live()) return;
+      }
+      // A pulled catalog can bring project types and prompts too.
+      void reloadPresets();
+      loadoutPrompts()
+        .then((found) => live() && setPrompts(found?.prompts ?? null))
+        .catch(() => live() && setPrompts(null));
+      try {
+        const local = keepDiscovered(await loadoutStatus(cwd, true), lastStatus.get(cwd) ?? null);
+        if (!live()) return;
+        lastStatus.set(cwd, local);
+        setStatus(local);
+        setDiscovering(true);
+        const full = await loadoutStatus(cwd);
+        if (!live()) return;
+        lastStatus.set(cwd, full);
+        setStatus(full);
+      } catch (err) {
+        if (live()) setError(String(err));
+      } finally {
+        if (live()) {
+          setChecking(false);
+          setDiscovering(false);
+          setPulling([]);
+        }
+      }
+    },
+    [cwd],
+  );
 
   // Mounted once per workspace (keyed on it by the caller), so a check still
   // running for the previous one cannot land here.
   useEffect(() => {
-    if (installed) refresh();
+    if (installed) void refresh();
   }, [installed, refresh]);
 
+  // Coming back to the window after a while: a quick local check. While the
+  // tab stays open: the auto-updated catalogs are pulled now and then.
   useEffect(() => {
     if (!installed) return;
-    loadoutPrompts()
-      .then((found) => setPrompts(found?.prompts ?? null))
-      .catch(() => setPrompts(null));
-  }, [installed]);
+    const onFocus = () => {
+      if (Date.now() - lastCheck.current > FOCUS_RECHECK_MS) void refresh();
+    };
+    window.addEventListener("focus", onFocus);
+    const timer = window.setInterval(() => void refresh(true), PERIODIC_PULL_MS);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.clearInterval(timer);
+    };
+  }, [installed, refresh]);
 
   async function unequip(name: string) {
     setEquipping(true);
@@ -487,11 +558,31 @@ export function LoadoutView({ workspace }: Props) {
         <section className="lo-card lo-project">
           <header className="lo-card__head">
             <h3>{t("loadout.thisProject")}</h3>
-            <span className="loadout__hint">{checking ? t("loadout.checking") : ""}</span>
-            <button className="btn btn--ghost btn--tiny" onClick={refresh} disabled={checking}>
+            <span className="loadout__hint" aria-live="polite">
+              {checking && <span className="lo-spinner" aria-hidden />}
+              {pulling.length
+                ? t("loadout.updatingCatalogs", { names: pulling.join(", ") })
+                : discovering
+                  ? t("loadout.discovering")
+                  : checking
+                    ? t("loadout.checking")
+                    : ""}
+            </span>
+            <button
+              className="btn btn--ghost btn--tiny"
+              onClick={() => void refresh(true)}
+              disabled={checking}
+              title={t("loadout.refreshHint")}
+            >
               {t("loadout.refresh")}
             </button>
           </header>
+
+          {Object.entries(pullErrors).map(([name, why]) => (
+            <p key={name} className="loadout__error">
+              {t("loadout.updateFailed", { name, error: why })}
+            </p>
+          ))}
 
           {units.length > 0 && (
             <div className="lo-row">
@@ -656,10 +747,18 @@ export function LoadoutView({ workspace }: Props) {
           {notice && <p className="loadout__notice">{notice}</p>}
         </section>
 
-        {!status && !error && <p className="loadout__none">{t("loadout.firstCheck")}</p>}
+        {!status && !error && (
+          <div className="lo-skeleton" aria-busy="true">
+            <p className="loadout__none">{t("loadout.firstCheck")}</p>
+            <span className="lo-skeleton__bar" />
+            <span className="lo-skeleton__bar" />
+            <span className="lo-skeleton__bar lo-skeleton__bar--short" />
+          </div>
+        )}
 
         {status && (
           <UnitsPyramid
+            busy={checking}
             status={status}
             plugging={plugging}
             onPlug={plug}

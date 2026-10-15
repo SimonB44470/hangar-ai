@@ -132,12 +132,17 @@ pub fn loadout_locate() -> Option<String> {
 }
 
 /// Every capability of the catalog, checked on this machine, with what the
-/// workspace has equipped. Slow by nature: the engine asks GitHub whether the
-/// private plugins are reachable.
+/// workspace has equipped. Asking GitHub which units this account can read is
+/// most of its time (about two seconds): `offline` skips that, so the tab can
+/// draw what is on this machine first and fill in the discovered units after.
 #[tauri::command]
-pub async fn loadout_status(cwd: String) -> Result<Value, String> {
+pub async fn loadout_status(cwd: String, offline: Option<bool>) -> Result<Value, String> {
     off_thread(move || {
-        let mut status = run_json(&["status", "--project", &cwd, "--json"])?;
+        let mut args = vec!["status", "--project", cwd.as_str(), "--json"];
+        if offline == Some(true) {
+            args.push("--offline");
+        }
+        let mut status = run_json(&args)?;
         let providers = script()?
             .parent()
             .and_then(Path::parent)
@@ -464,39 +469,61 @@ pub async fn loadout_plug(repo: String, marketplace: String) -> Result<(), Strin
         if !is_marketplace_name(&marketplace) {
             return Err(format!("not a marketplace name: {marketplace}"));
         }
-        crate::path_env::ensure();
-        let spawn = |program: &str, prefix: &[&str]| {
-            let mut command = Command::new(program);
-            command.args(prefix).args(args);
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                command.creation_flags(CREATE_NO_WINDOW);
-            }
-            command.output()
-        };
-        let output = match spawn("claude", &[]) {
-            // An npm install is `claude.cmd`, which only cmd.exe resolves; the
-            // repository was checked above, so nothing in it reaches cmd as syntax.
-            #[cfg(windows)]
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                spawn("cmd", &["/C", "claude"])
-            }
-            other => other,
-        }
-        .map_err(|err| match err.kind() {
-            std::io::ErrorKind::NotFound => "Claude Code was not found on PATH".to_string(),
-            _ => format!("could not run claude: {err}"),
-        })?;
-        if !output.status.success() {
-            let mut text = output.stderr;
-            text.extend_from_slice(&output.stdout);
-            return Err(diagnostic(&text));
-        }
+        claude(&args)?;
         auto_update_by_default(&marketplace, &repo)
             .map_err(|err| format!("plugged in, but auto-update is not set: {err}"))
     })
     .await
+}
+
+/// Runs the Claude Code CLI with arguments its callers have already checked
+/// (each builds them from a whitelisted shape).
+fn claude(args: &[&str]) -> Result<(), String> {
+    crate::path_env::ensure();
+    let spawn = |program: &str, prefix: &[&str]| {
+        let mut command = Command::new(program);
+        command.args(prefix).args(args);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(CREATE_NO_WINDOW);
+        }
+        command.output()
+    };
+    let output = match spawn("claude", &[]) {
+        // An npm install is `claude.cmd`, which only cmd.exe resolves; every
+        // argument was checked by its caller, so nothing reaches cmd as syntax.
+        #[cfg(windows)]
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => spawn("cmd", &["/C", "claude"]),
+        other => other,
+    }
+    .map_err(|err| match err.kind() {
+        std::io::ErrorKind::NotFound => "Claude Code was not found on PATH".to_string(),
+        _ => format!("could not run claude: {err}"),
+    })?;
+    if !output.status.success() {
+        let mut text = output.stderr;
+        text.extend_from_slice(&output.stdout);
+        return Err(diagnostic(&text));
+    }
+    Ok(())
+}
+
+/// Exactly `claude plugin marketplace update <name>`.
+fn update_args(name: &str) -> Result<[&str; 4], String> {
+    if !is_marketplace_name(name) {
+        return Err(format!("not a marketplace name: {name}"));
+    }
+    Ok(["plugin", "marketplace", "update", name])
+}
+
+/// Pulls one catalog's marketplace clone, the copy the engine reads: without
+/// it, a plugin merged upstream stays invisible until Claude Code refreshes
+/// on its own at the next session start. Only the clone moves; running
+/// sessions keep what they loaded until /reload-plugins.
+#[tauri::command]
+pub async fn loadout_update_marketplace(name: String) -> Result<(), String> {
+    off_thread(move || claude(&update_args(&name)?)).await
 }
 
 #[cfg(test)]
@@ -582,8 +609,14 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, "{}").unwrap();
 
-        let status = block_on(loadout_status(cwd.clone())).unwrap();
+        let local = block_on(loadout_status(cwd.clone(), Some(true))).unwrap();
+        assert_eq!(local["discovery"], "skipped");
+        let status = block_on(loadout_status(cwd.clone(), None)).unwrap();
         println!("discovery {}", status["discovery"]);
+        assert_eq!(
+            local["plugins"], status["plugins"],
+            "offline lists the same plugins"
+        );
         let plugins = status["plugins"].as_array().unwrap();
         assert!(plugins.iter().any(|p| p["id"] == "loadout@loadout"));
         // Unit plugins, not bases: equipping one must not drag in what is tested.
@@ -736,6 +769,17 @@ mod tests {
     }
 
     #[test]
+    fn only_a_marketplace_name_is_updated() {
+        assert_eq!(
+            update_args("crew").unwrap(),
+            ["plugin", "marketplace", "update", "crew"]
+        );
+        for bad in ["", "--all", "a b", "a&calc", "a/b", "../x"] {
+            assert!(update_args(bad).is_err(), "{bad} must be refused");
+        }
+    }
+
+    #[test]
     fn only_a_plain_marketplace_name_is_written() {
         assert!(is_marketplace_name("crew"));
         assert!(is_marketplace_name("acme-tools.v2"));
@@ -754,6 +798,30 @@ mod tests {
     #[ignore]
     fn this_machine_s_auto_updates() {
         println!("{:?}", loadout_auto_updates().unwrap());
+    }
+
+    /// Pulls one real marketplace clone through the CLI, as "Check again" does:
+    /// `LOADOUT_PULL=<marketplace name>`, then
+    /// `cargo test --lib loadout::tests::real_marketplace -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn real_marketplace_update() {
+        let name = std::env::var("LOADOUT_PULL").expect("LOADOUT_PULL");
+        // `cargo test` puts every native dependency's folder in front of PATH
+        // (18k characters here), past what cmd.exe searches: the npm
+        // `claude.cmd` and the `node` it calls are then "not recognized". The
+        // app runs with the user's own PATH; give the test the same.
+        let path = std::env::var_os("PATH").unwrap_or_default();
+        let own: Vec<PathBuf> = std::env::split_paths(&path)
+            .filter(|dir| !dir.to_string_lossy().contains("target"))
+            .collect();
+        std::env::set_var("PATH", std::env::join_paths(own).unwrap());
+        let started = std::time::Instant::now();
+        tauri::async_runtime::block_on(loadout_update_marketplace(name.clone())).unwrap();
+        println!("{name} pulled in {:?}", started.elapsed());
+        assert!(
+            tauri::async_runtime::block_on(loadout_update_marketplace("--all".into())).is_err()
+        );
     }
 
     #[test]

@@ -4720,6 +4720,63 @@ body.is-dragging-pane .board-dock__grip {
   font-size: calc(11.5px * var(--ui-scale));
 }
 
+.lo-fold.is-busy .lo-pyramid {
+  opacity: 0.6;
+  transition: opacity 0.2s;
+}
+
+.lo-spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--fg-subtle);
+  border-radius: 50%;
+  vertical-align: -1px;
+  animation: lo-spin 0.8s linear infinite;
+}
+
+@keyframes lo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lo-skeleton {
+  display: grid;
+  gap: 8px;
+}
+
+.lo-skeleton__bar {
+  display: block;
+  height: 14px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border) 25%, var(--border-strong) 50%, var(--border) 75%);
+  background-size: 200% 100%;
+  animation: lo-shimmer 1.2s ease-in-out infinite;
+}
+
+.lo-skeleton__bar--short {
+  width: 45%;
+}
+
+@keyframes lo-shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lo-spinner,
+  .lo-skeleton__bar {
+    animation: none;
+  }
+}
+
 .lo-tier__auto {
   display: inline-flex;
   align-items: center;

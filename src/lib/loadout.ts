@@ -117,7 +117,15 @@ export interface EquipReport {
 /** Path to the engine, or `null` when Loadout is not installed. */
 export const loadoutLocate = () => invoke<string | null>("loadout_locate");
 
-export const loadoutStatus = (cwd: string) => invoke<LoadoutStatus>("loadout_status", { cwd });
+/**
+ * `offline`: without asking GitHub which units this account can read — about a
+ * second instead of three, so the tab draws what is on this machine first.
+ */
+export const loadoutStatus = (cwd: string, offline = false) =>
+  invoke<LoadoutStatus>("loadout_status", { cwd, offline });
+
+/** Pulls one catalog's marketplace clone, the copy the engine reads. */
+export const loadoutUpdateMarketplace = (name: string) => invoke<void>("loadout_update_marketplace", { name });
 
 /** Keyed by preset name, or `<preset>@<catalog>` when two catalogs share one. */
 export const loadoutPresets = () => invoke<Record<string, Preset>>("loadout_presets");
@@ -436,4 +444,35 @@ export interface AutoUpdateTarget {
 export function autoUpdateTarget(block: UnitBlock, status: LoadoutStatus, core: boolean): AutoUpdateTarget | null {
   if (core) return { marketplace: status.catalog, repo: null };
   return block.info?.added ? { marketplace: block.info.catalog, repo: block.info.repo } : null;
+}
+
+/**
+ * The catalogs a re-check pulls: the Loadout ones the person set to
+ * auto-update, as Claude Code would at its next session start. Sorted, so the
+ * "updating …" line reads the same each time.
+ */
+export function catalogsToPull(
+  autoUpdates: Record<string, boolean> | null,
+  status: LoadoutStatus | null,
+  presets: Record<string, Preset>,
+): string[] {
+  const loadout = catalogsOf(status, presets);
+  return Object.entries(autoUpdates ?? {})
+    .filter(([name, on]) => on && loadout.has(name))
+    .map(([name]) => name)
+    .sort();
+}
+
+/**
+ * An offline status (drawn first, while GitHub is asked) keeps what the last
+ * full one discovered: units found on GitHub stay offered instead of flickering
+ * away for the two seconds the full check takes.
+ */
+export function keepDiscovered(local: LoadoutStatus, previous: LoadoutStatus | null): LoadoutStatus {
+  if (!previous?.units || previous.discovery !== "github" || !local.units) return local;
+  const seen = new Map(previous.units.map((u) => [u.unit, u]));
+  const units = local.units.map((u) => ({ ...u, discovered: u.discovered || Boolean(seen.get(u.unit)?.discovered) }));
+  const here = new Set(units.map((u) => u.unit));
+  for (const u of previous.units) if (u.discovered && !here.has(u.unit)) units.push({ ...u, added: false, local: false });
+  return { ...local, discovery: previous.discovery, units };
 }

@@ -3,12 +3,15 @@ import { useStore } from "../store";
 import { loadoutLocate, loadoutPresets, type Preset } from "./loadout";
 
 /**
- * Asked once per window: whether the engine is installed, and the catalog's
- * presets. Neither changes while the app runs, and the tab, the sidebar, the
- * new-workspace dialog and the offer to equip all read them.
+ * Shared by every window part that reads them (the tab, the sidebar, the
+ * new-workspace dialog, the offer to equip): whether the engine is installed,
+ * asked once, and the catalogs' presets, asked once and again whenever the tab
+ * re-reads the catalogs (`reloadPresets`) — a catalog can gain a project type
+ * while the app runs.
  */
 let located: Promise<boolean> | null = null;
 let presetsOnce: Promise<Record<string, Preset>> | null = null;
+const listeners = new Set<(presets: Record<string, Preset>) => void>();
 
 const locate = () =>
   (located ??= loadoutLocate()
@@ -17,6 +20,20 @@ const locate = () =>
 
 const presetsOf = () =>
   (presetsOnce ??= loadoutPresets().catch(() => ({}) as Record<string, Preset>));
+
+/** Asks the engine for the presets again and hands them to every reader. Keeps the old ones if it fails. */
+export async function reloadPresets(): Promise<Record<string, Preset>> {
+  const previous = presetsOnce;
+  const next = loadoutPresets();
+  try {
+    const presets = await next;
+    presetsOnce = next;
+    for (const listener of listeners) listener(presets);
+    return presets;
+  } catch {
+    return previous ? previous : {};
+  }
+}
 
 export interface LoadoutAddon {
   /** The add-on is switched on in the settings. */
@@ -38,13 +55,16 @@ export function useLoadout(): LoadoutAddon {
   useEffect(() => {
     if (!enabled) return;
     let live = true;
+    const update = (next: Record<string, Preset>) => live && setPresets(next);
+    listeners.add(update);
     locate().then((found) => {
       if (!live) return;
       setInstalled(found);
-      if (found) presetsOf().then((p) => live && setPresets(p));
+      if (found) presetsOf().then(update);
     });
     return () => {
       live = false;
+      listeners.delete(update);
     };
   }, [enabled]);
 
