@@ -4672,57 +4672,168 @@ body.is-dragging-pane .board-dock__grip {
   color: var(--fg-muted);
 }
 
-/* The units pyramid: private units on top, narrower, the core as the wide base. */
-.lo-pyramid {
+/* "Your Loadout": one compact row per unit, opening on its plugins, then their skills. */
+.lo-units {
   display: grid;
   gap: 8px;
   padding: 10px 11px 12px;
+  transition: opacity 0.2s;
 }
 
-.lo-pyramid__units {
-  display: grid;
-  gap: 8px;
-  margin: 0 8%;
+.lo-fold.is-busy .lo-units {
+  opacity: 0.6;
 }
 
-.lo-tier {
-  padding: 9px 11px;
-  border: 1px solid var(--accent-ring);
-  background: var(--bg);
-}
-
-.lo-tier--base {
-  border-color: var(--accent);
-  border-top-width: 2px;
-  background: color-mix(in srgb, var(--accent) 6%, var(--bg));
-}
-
-.lo-tier--locked {
-  border-style: dashed;
-  border-color: var(--border-strong);
-  opacity: 0.75;
-}
-
-.lo-tier__head {
+.lo-units__tools {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 4px 10px;
-  margin-bottom: 6px;
+  align-items: center;
+  gap: 6px 12px;
 }
 
-.lo-tier__name {
+.lo-units__search {
+  flex: 1 1 220px;
+  min-width: 0;
+  padding: 4px 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+.lo-units__filter,
+.lo-unit__auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--fg-subtle);
+  font-size: calc(11.5px * var(--ui-scale));
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lo-units__filter input,
+.lo-unit__auto input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.lo-units__list,
+.lo-unit__plugins,
+.lo-skill-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lo-units__list {
+  border: 1px solid var(--border);
+}
+
+.lo-unit + .lo-unit {
+  border-top: 1px solid var(--border);
+}
+
+.lo-unit--core {
+  background: color-mix(in srgb, var(--accent) 5%, var(--bg));
+}
+
+.lo-unit__row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 10px 0 0;
+}
+
+.lo-unit__toggle {
+  display: flex;
+  flex: 1;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lo-unit__toggle:hover {
+  background: var(--surface-hover);
+}
+
+.lo-unit__caret {
+  width: 10px;
+  color: var(--fg-subtle);
+}
+
+.lo-unit__name {
   font-weight: 700;
 }
 
-.lo-tier__who {
+.lo-unit__counts {
   color: var(--fg-subtle);
   font-size: calc(11.5px * var(--ui-scale));
 }
 
-.lo-fold.is-busy .lo-pyramid {
-  opacity: 0.6;
-  transition: opacity 0.2s;
+.lo-badge--new {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.lo-unit__plugins {
+  display: grid;
+  gap: 2px;
+  padding: 0 10px 8px 28px;
+}
+
+.lo-unit-plugin__head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lo-unit-plugin__desc,
+.lo-skill-list__desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lo-unit-plugin__skills {
+  flex: none;
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: calc(11.5px * var(--ui-scale));
+  cursor: pointer;
+}
+
+.lo-skill-list {
+  display: grid;
+  gap: 1px;
+  margin: 3px 0 6px 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+}
+
+.lo-skill-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lo-skill-list code {
+  flex: none;
 }
 
 .lo-spinner {
@@ -4775,40 +4886,6 @@ body.is-dragging-pane .board-dock__grip {
   .lo-skeleton__bar {
     animation: none;
   }
-}
-
-.lo-tier__auto {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  margin-left: auto;
-  color: var(--fg-subtle);
-  font-size: calc(11.5px * var(--ui-scale));
-  cursor: pointer;
-}
-
-.lo-tier__auto input {
-  margin: 0;
-  cursor: pointer;
-}
-
-.lo-tier__plugins {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: 5px;
-}
-
-.lo-tier__desc {
-  color: var(--fg-muted);
-}
-
-.lo-tier__skills {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  margin-top: 3px;
 }
 
 /* Equipped plugins: the core is always on; the others carry a remove button. */

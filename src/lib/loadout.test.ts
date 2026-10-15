@@ -16,6 +16,10 @@ import {
   loadoutIds,
   missing,
   missingFixes,
+  newSkills,
+  shownUnit,
+  skillCount,
+  skillKeys,
   offerable,
   pick,
   pluggable,
@@ -354,5 +358,49 @@ describe("re-checking the catalogs", () => {
     ]);
     expect(keepDiscovered(local, null)).toBe(local);
     expect(keepDiscovered(local, { ...engine, discovery: "unavailable" })).toBe(local);
+  });
+});
+
+describe("the unit list", () => {
+  const withSkills: LoadoutStatus = {
+    ...engine,
+    plugins: [
+      plugin("loadout", "loadout", { skills: [{ name: "setup", description: "Checks this machine" }] }),
+      plugin("brush", "studio", { base: true, skills: [{ name: "paint", description: "Paints textures" }, { name: "mix", description: "Mixes colours" }] }),
+      plugin("sketch", "studio", { description: "Quick drafts", skills: [{ name: "outline", description: "Draws outlines" }] }),
+      plugin("tavern", "crew", { base: true, skills: [] }),
+    ],
+  };
+  const { core, units } = pyramidOf(withSkills);
+  const studio = units.find((u) => u.unit === "studio")!;
+  const everything = () => true;
+
+  it("counts and keys each unit's skills", () => {
+    expect(skillCount(studio)).toBe(3);
+    expect(skillKeys(studio)).toEqual(["brush@studio/paint", "brush@studio/mix", "sketch@studio/outline"]);
+  });
+
+  it("says which skills are new, and none the first time a unit shows", () => {
+    expect(newSkills(studio, undefined).size).toBe(0);
+    expect([...newSkills(studio, ["brush@studio/paint", "brush@studio/mix"])]).toEqual(["sketch@studio/outline"]);
+  });
+
+  it("searches skill names and descriptions, any case, keeping only what matches", () => {
+    const found = shownUnit(studio, "COLOUR", false, everything)!;
+    expect(found.searching).toBe(true);
+    expect(found.plugins.map((p) => [p.plugin.name, p.skills.map((s) => s.name)])).toEqual([["brush", ["mix"]]]);
+    expect(shownUnit(core!, "colour", false, everything)).toBe(null);
+  });
+
+  it("shows a whole plugin or unit when its own name or description matches", () => {
+    expect(shownUnit(studio, "drafts", false, everything)!.plugins.map((p) => [p.plugin.name, p.skills.length])).toEqual([["sketch", 1]]);
+    expect(shownUnit(studio, "studio", false, everything)!.plugins.length).toBe(2);
+  });
+
+  it("keeps only the plugins equipped in this project, and drops a unit with none", () => {
+    const equipped = (p: LoadoutPlugin) => p.name === "sketch";
+    expect(shownUnit(studio, "", true, equipped)!.plugins.map((p) => p.plugin.name)).toEqual(["sketch"]);
+    expect(shownUnit(core!, "", true, equipped)).toBe(null);
+    expect(shownUnit(studio, "", false, equipped)!.searching).toBe(false);
   });
 });

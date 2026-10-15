@@ -8,6 +8,11 @@ import {
   idOf,
   isCore,
   keepDiscovered,
+  newSkills,
+  shownUnit,
+  skillCount,
+  skillKey,
+  skillKeys,
   legacyIds,
   loadoutEquip,
   loadoutIds,
@@ -39,6 +44,8 @@ import {
   type LoadoutStatus,
   type AutoUpdateTarget,
   type LoadoutUnit,
+  type ShownPlugin,
+  type ShownUnit,
   type ProviderUse,
 } from "../lib/loadout";
 import { reloadPresets, useLoadout } from "../lib/useLoadout";
@@ -181,8 +188,7 @@ function PlugButton({ unit, busy, onPlug }: { unit: LoadoutUnit; busy: boolean; 
   );
 }
 
-/** A unit out of reach is never listed, so a tile has no lock; one found on GitHub but not added offers "plug in". */
-/** The pyramid's auto-update state: `null` when the user settings could not be read, and then no toggle shows. */
+/** The list's auto-update state: `null` when the user settings could not be read, and then no toggle shows. */
 interface AutoUpdates {
   state: Record<string, boolean> | null;
   /** The marketplace being written. */
@@ -190,105 +196,230 @@ interface AutoUpdates {
   onToggle: (target: AutoUpdateTarget, on: boolean) => void;
 }
 
-function UnitTile({
-  block,
-  base,
-  plugging,
-  onPlug,
-  target,
-  auto,
+/** Per unit, the skills already seen, so a new one can say so. Per machine, in local storage. */
+const SEEN_KEY = "hangar.loadout.seenSkills";
+
+function readSeen(): Record<string, string[]> {
+  try {
+    const value = JSON.parse(localStorage.getItem(SEEN_KEY) ?? "{}");
+    return value && typeof value === "object" ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSeen(seen: Record<string, string[]>) {
+  try {
+    localStorage.setItem(SEEN_KEY, JSON.stringify(seen));
+  } catch {
+    // Storage off: "new" badges just do not persist.
+  }
+}
+
+function PluginRow({
+  shown,
+  equipped,
+  fresh,
+  open,
+  onToggle,
 }: {
-  block: UnitBlock;
-  base?: boolean;
-  plugging?: string | null;
-  onPlug?: (unit: LoadoutUnit) => void;
-  target?: AutoUpdateTarget | null;
-  auto?: AutoUpdates;
+  shown: ShownPlugin;
+  equipped: boolean;
+  /** Keys of the skills new to this person. */
+  fresh: Set<string>;
+  open: boolean;
+  onToggle: () => void;
 }) {
   const t = useT();
-  const plug = block.info?.discovered && !block.info.added ? block.info : null;
-  const autoState = auto?.state;
+  const { plugin, skills } = shown;
   return (
-    <section className={`lo-tier ${base ? "lo-tier--base" : ""}`} title={t("loadout.unitOpen")}>
-      <header className="lo-tier__head">
-        <span className="lo-tier__name" title={block.label}>
-          ✓ {block.unit}
-        </span>
-        <span className="lo-tier__who">{base ? t("loadout.tierCore") : t("loadout.tierUnit")}</span>
-        {plug && onPlug && <PlugButton unit={plug} busy={plugging === plug.unit} onPlug={onPlug} />}
-        {target && auto && autoState && (
-          <label className="lo-tier__auto" title={t("loadout.autoUpdateHint")}>
-            <input
-              type="checkbox"
-              checked={autoState[target.marketplace] === true}
-              disabled={auto.busy === target.marketplace}
-              onChange={(e) => auto.onToggle(target, e.target.checked)}
-            />
-            {t("loadout.autoUpdate")}
-          </label>
+    <li className="lo-unit-plugin">
+      <div className="lo-unit-plugin__head">
+        <strong>{plugin.name}</strong>
+        {plugin.base && <em className="lo-badge lo-badge--base">{t("loadout.base")}</em>}
+        {equipped && <em className="lo-badge">{t("loadout.equippedHereBadge")}</em>}
+        {plugin.description && (
+          <span className="lo-unit-plugin__desc" title={plugin.description}>
+            {plugin.description}
+          </span>
         )}
-      </header>
-      <ul className="lo-tier__plugins">
-        {block.plugins.map((plugin) => (
-          <li key={idOf(plugin)}>
-            <strong>{plugin.name}</strong>
-            {plugin.base && <em className="lo-badge lo-badge--base">{t("loadout.base")}</em>}
-            {plugin.description && <span className="lo-tier__desc"> — {plugin.description}</span>}
-            {plugin.skills && plugin.skills.length > 0 && (
-              <span className="lo-tier__skills">
-                {plugin.skills.map((skill) => (
-                  <span key={skill.name} className="lo-chip" title={skill.description}>
-                    {skill.name}
-                  </span>
-                ))}
+        {skills.length > 0 && (
+          <button className="lo-unit-plugin__skills" onClick={onToggle} aria-expanded={open}>
+            {t("loadout.skillCount", { n: skills.length })} {open ? "▾" : "▸"}
+          </button>
+        )}
+      </div>
+      {open && skills.length > 0 && (
+        <ul className="lo-skill-list">
+          {skills.map((skill) => (
+            <li key={skill.name}>
+              <code>{skill.name}</code>
+              {fresh.has(skillKey(plugin, skill)) && <em className="lo-badge lo-badge--new">{t("loadout.newBadge")}</em>}
+              <span className="lo-skill-list__desc" title={skill.description}>
+                {skill.description}
               </span>
-            )}
-          </li>
-        ))}
-      </ul>
-    </section>
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
   );
 }
 
-/** What each unit holds, as a pyramid: the core everyone stands on, the private units on top. */
-function UnitsPyramid({
+/**
+ * What this person can use, one compact row per unit (the core first): name,
+ * how many plugins and skills, what is new since the last look, auto-update.
+ * A row opens on its plugins, one line each; a plugin opens on its skills. A
+ * search across every skill and an "equipped in this project" filter keep it
+ * readable with many units.
+ */
+function UnitsList({
   status,
   busy,
   plugging,
   onPlug,
   auto,
+  isEquipped,
 }: {
   status: LoadoutStatus;
-  /** A check is running: the pyramid dims until it lands. */
+  /** A check is running: the list dims until it lands. */
   busy: boolean;
   plugging: string | null;
   onPlug: (unit: LoadoutUnit) => void;
   auto: AutoUpdates;
+  isEquipped: (plugin: LoadoutPlugin) => boolean;
 }) {
   const t = useT();
   const { core, units } = pyramidOf(status);
+  const blocks = core ? [core, ...units] : units;
+  const [query, setQuery] = useState("");
+  const [equippedOnly, setEquippedOnly] = useState(false);
+  const [openUnits, setOpenUnits] = useState<Set<string>>(() => new Set());
+  const [openPlugins, setOpenPlugins] = useState<Set<string>>(() => new Set());
+  const [seen, setSeen] = useState(readSeen);
+  /** What was new when a unit was opened: its skills keep their badge while it stays open. */
+  const [fresh, setFresh] = useState<Record<string, Set<string>>>({});
+
+  // A unit seen for the first time: all of it counts as seen.
+  const unseen = blocks.filter((block) => !seen[block.unit]);
+  useEffect(() => {
+    if (!unseen.length) return;
+    const next = { ...seen };
+    for (const block of unseen) next[block.unit] = skillKeys(block);
+    setSeen(next);
+    writeSeen(next);
+  }, [unseen.map((b) => b.unit).join("+")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const flip = (set: Set<string>, key: string) => {
+    const next = new Set(set);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  };
+
+  function toggleUnit(block: UnitBlock) {
+    const opening = !openUnits.has(block.unit);
+    setOpenUnits((open) => flip(open, block.unit));
+    if (!opening) return;
+    const found = newSkills(block, seen[block.unit]);
+    if (!found.size) return;
+    setFresh((all) => ({ ...all, [block.unit]: found }));
+    // Shown now: no longer new next time.
+    const next = { ...seen, [block.unit]: skillKeys(block) };
+    setSeen(next);
+    writeSeen(next);
+  }
+
+  const shown = blocks
+    .map((block) => shownUnit(block, query, equippedOnly, isEquipped))
+    .filter((unit): unit is ShownUnit => Boolean(unit));
+
   return (
     <details className={`lo-fold ${busy ? "is-busy" : ""}`} open>
       <summary>
         <span className="lo-fold__title">{t("loadout.pyramid")}</span>
         <span className="lo-fold__sub">{t("loadout.pyramidHint")}</span>
       </summary>
-      <div className="lo-pyramid">
-        {units.length > 0 && (
-          <div className="lo-pyramid__units" style={{ gridTemplateColumns: units.map((u) => `${Math.max(1, u.plugins.length)}fr`).join(" ") }}>
-            {units.map((block) => (
-              <UnitTile
-                key={block.unit}
-                block={block}
-                plugging={plugging}
-                onPlug={onPlug}
-                target={autoUpdateTarget(block, status, false)}
-                auto={auto}
-              />
-            ))}
-          </div>
+      <div className="lo-units">
+        <div className="lo-units__tools">
+          <input
+            type="search"
+            className="lo-units__search"
+            placeholder={t("loadout.searchSkills")}
+            aria-label={t("loadout.searchSkills")}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <label className="lo-units__filter">
+            <input type="checkbox" checked={equippedOnly} onChange={(e) => setEquippedOnly(e.target.checked)} />
+            {t("loadout.filterEquipped")}
+          </label>
+        </div>
+        {shown.length === 0 && (
+          <p className="lo-row__hint">
+            {query.trim() ? t("loadout.noMatch", { query: query.trim() }) : t("loadout.nothingEquipped")}
+          </p>
         )}
-        {core && <UnitTile block={core} base target={autoUpdateTarget(core, status, true)} auto={auto} />}
+        <ul className="lo-units__list">
+          {shown.map(({ block, plugins, searching }) => {
+            const isCoreBlock = block === core;
+            const open = searching || openUnits.has(block.unit);
+            const news = newSkills(block, seen[block.unit]).size;
+            const target = autoUpdateTarget(block, status, isCoreBlock);
+            const plug = block.info?.discovered && !block.info.added ? block.info : null;
+            return (
+              <li key={block.unit} className={`lo-unit ${open ? "is-open" : ""} ${isCoreBlock ? "lo-unit--core" : ""}`}>
+                <div className="lo-unit__row">
+                  <button
+                    className="lo-unit__toggle"
+                    onClick={() => toggleUnit(block)}
+                    aria-expanded={open}
+                    title={isCoreBlock ? t("loadout.tierCore") : block.label}
+                  >
+                    <span className="lo-unit__caret" aria-hidden>
+                      {open ? "▾" : "▸"}
+                    </span>
+                    <span className="lo-unit__name">{block.unit}</span>
+                    <span className="lo-unit__counts">
+                      {t("loadout.pluginCount", { n: block.plugins.length })} ·{" "}
+                      {t("loadout.skillCount", { n: skillCount(block) })}
+                    </span>
+                    {news > 0 && <em className="lo-badge lo-badge--new">{t("loadout.newSkills", { n: news })}</em>}
+                  </button>
+                  {plug && <PlugButton unit={plug} busy={plugging === plug.unit} onPlug={onPlug} />}
+                  {target && auto.state && (
+                    <label className="lo-unit__auto" title={t("loadout.autoUpdateHint")}>
+                      <input
+                        type="checkbox"
+                        checked={auto.state[target.marketplace] === true}
+                        disabled={auto.busy === target.marketplace}
+                        onChange={(e) => auto.onToggle(target, e.target.checked)}
+                      />
+                      {t("loadout.autoUpdate")}
+                    </label>
+                  )}
+                </div>
+                {open && (
+                  <ul className="lo-unit__plugins">
+                    {plugins.map((item) => {
+                      const id = idOf(item.plugin);
+                      return (
+                        <PluginRow
+                          key={id}
+                          shown={item}
+                          equipped={isEquipped(item.plugin)}
+                          fresh={fresh[block.unit] ?? new Set()}
+                          open={searching || openPlugins.has(id)}
+                          onToggle={() => setOpenPlugins((all) => flip(all, id))}
+                        />
+                      );
+                    })}
+                  </ul>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       </div>
     </details>
   );
@@ -757,8 +888,9 @@ export function LoadoutView({ workspace }: Props) {
         )}
 
         {status && (
-          <UnitsPyramid
+          <UnitsList
             busy={checking}
+            isEquipped={(plugin) => isCore(idOf(plugin, status), status) || equippedIds.includes(idOf(plugin, status))}
             status={status}
             plugging={plugging}
             onPlug={plug}

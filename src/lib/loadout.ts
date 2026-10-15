@@ -476,3 +476,65 @@ export function keepDiscovered(local: LoadoutStatus, previous: LoadoutStatus | n
   for (const u of previous.units) if (u.discovered && !here.has(u.unit)) units.push({ ...u, added: false, local: false });
   return { ...local, discovery: previous.discovery, units };
 }
+
+/** A skill's key for "new since last look": the plugin's id and the skill's name. */
+export const skillKey = (plugin: LoadoutPlugin, skill: SkillInfo): string => `${idOf(plugin)}/${skill.name}`;
+
+export const skillKeys = (block: UnitBlock): string[] =>
+  block.plugins.flatMap((plugin) => (plugin.skills ?? []).map((skill) => skillKey(plugin, skill)));
+
+export const skillCount = (block: UnitBlock): number =>
+  block.plugins.reduce((sum, plugin) => sum + (plugin.skills?.length ?? 0), 0);
+
+/**
+ * The skills of a unit not seen yet. The first time a unit shows (`seen`
+ * undefined) nothing is new: everything would be, which says nothing.
+ */
+export function newSkills(block: UnitBlock, seen: string[] | undefined): Set<string> {
+  if (!seen) return new Set();
+  const known = new Set(seen);
+  return new Set(skillKeys(block).filter((key) => !known.has(key)));
+}
+
+export interface ShownPlugin {
+  plugin: LoadoutPlugin;
+  /** All its skills, or only those the search matches. */
+  skills: SkillInfo[];
+}
+
+export interface ShownUnit {
+  block: UnitBlock;
+  plugins: ShownPlugin[];
+  /** A search is on: the unit and the matching skills show open. */
+  searching: boolean;
+}
+
+/**
+ * What the unit list shows of a unit for a search (unit, plugin or skill name
+ * and description, any case) and the "equipped in this project" filter, or
+ * `null` when nothing of it is left. A unit or plugin that matches shows whole;
+ * otherwise only its matching skills.
+ */
+export function shownUnit(
+  block: UnitBlock,
+  query: string,
+  equippedOnly: boolean,
+  isEquipped: (plugin: LoadoutPlugin) => boolean,
+): ShownUnit | null {
+  const q = query.trim().toLowerCase();
+  const hit = (...texts: (string | undefined)[]) => texts.some((text) => text?.toLowerCase().includes(q));
+  const pool = block.plugins.filter((plugin) => !equippedOnly || isEquipped(plugin));
+  if (equippedOnly && !pool.length) return null;
+  if (!q) return { block, plugins: pool.map((plugin) => ({ plugin, skills: plugin.skills ?? [] })), searching: false };
+  const whole = hit(block.unit, block.label);
+  const plugins: ShownPlugin[] = [];
+  for (const plugin of pool) {
+    const skills = plugin.skills ?? [];
+    if (whole || hit(plugin.name, plugin.description)) plugins.push({ plugin, skills });
+    else {
+      const matching = skills.filter((skill) => hit(skill.name, skill.description));
+      if (matching.length) plugins.push({ plugin, skills: matching });
+    }
+  }
+  return plugins.length ? { block, plugins, searching: true } : null;
+}
