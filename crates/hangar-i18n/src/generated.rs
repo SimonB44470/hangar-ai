@@ -40,12 +40,20 @@ pub enum Key {
     AccountsSettingsAddPlaceholder,
     /// `accounts.settings.addTitle`
     AccountsSettingsAddTitle,
+    /// `accounts.settings.badge`
+    AccountsSettingsBadge,
+    /// `accounts.settings.badges`
+    AccountsSettingsBadges,
+    /// `accounts.settings.badgesHint`
+    AccountsSettingsBadgesHint,
     /// `accounts.settings.cancel`
     AccountsSettingsCancel,
     /// `accounts.settings.default`
     AccountsSettingsDefault,
     /// `accounts.settings.failed`
     AccountsSettingsFailed,
+    /// `accounts.settings.iconNone`
+    AccountsSettingsIconNone,
     /// `accounts.settings.intro`
     AccountsSettingsIntro,
     /// `accounts.settings.listLabel`
@@ -82,6 +90,16 @@ pub enum Key {
     AccountsSettingsSetDefault,
     /// `accounts.settings.title`
     AccountsSettingsTitle,
+    /// `accounts.settings.toneAccent`
+    AccountsSettingsToneAccent,
+    /// `accounts.settings.toneDanger`
+    AccountsSettingsToneDanger,
+    /// `accounts.settings.toneNone`
+    AccountsSettingsToneNone,
+    /// `accounts.settings.toneSuccess`
+    AccountsSettingsToneSuccess,
+    /// `accounts.settings.toneWarning`
+    AccountsSettingsToneWarning,
     /// `accounts.settings.unsupportedBody`
     AccountsSettingsUnsupportedBody,
     /// `accounts.settings.unsupportedTitle`
@@ -106,6 +124,8 @@ pub enum Key {
     AccountsSwitcherMenu,
     /// `accounts.switcher.nextLaunch`
     AccountsSwitcherNextLaunch,
+    /// `accounts.switcher.noFigures`
+    AccountsSwitcherNoFigures,
     /// `accounts.switcher.notLoggedIn`
     AccountsSwitcherNotLoggedIn,
     /// `accounts.switcher.percent`
@@ -116,10 +136,6 @@ pub enum Key {
     AccountsSwitcherRestartHere,
     /// `accounts.switcher.running`
     AccountsSwitcherRunning,
-    /// `accounts.switcher.unknown`
-    AccountsSwitcherUnknown,
-    /// `accounts.switcher.usage`
-    AccountsSwitcherUsage,
     /// `accounts.switcher.useEverywhere`
     AccountsSwitcherUseEverywhere,
     /// `accounts.switcher.useEverywhereLabel`
@@ -128,6 +144,8 @@ pub enum Key {
     AccountsSwitcherUseHere,
     /// `accounts.switcher.week`
     AccountsSwitcherWeek,
+    /// `accounts.switcher.window`
+    AccountsSwitcherWindow,
     /// `activity.appStarted`
     ActivityAppStarted,
     /// `activity.appStopped`
@@ -4443,7 +4461,7 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2213;
+pub const KEY_COUNT: usize = 2222;
 
 impl Key {
     /// Every key, in the order of their ids.
@@ -4461,9 +4479,13 @@ impl Key {
         Key::AccountsSettingsAddName,
         Key::AccountsSettingsAddPlaceholder,
         Key::AccountsSettingsAddTitle,
+        Key::AccountsSettingsBadge,
+        Key::AccountsSettingsBadges,
+        Key::AccountsSettingsBadgesHint,
         Key::AccountsSettingsCancel,
         Key::AccountsSettingsDefault,
         Key::AccountsSettingsFailed,
+        Key::AccountsSettingsIconNone,
         Key::AccountsSettingsIntro,
         Key::AccountsSettingsListLabel,
         Key::AccountsSettingsLogIn,
@@ -4482,6 +4504,11 @@ impl Key {
         Key::AccountsSettingsSave,
         Key::AccountsSettingsSetDefault,
         Key::AccountsSettingsTitle,
+        Key::AccountsSettingsToneAccent,
+        Key::AccountsSettingsToneDanger,
+        Key::AccountsSettingsToneNone,
+        Key::AccountsSettingsToneSuccess,
+        Key::AccountsSettingsToneWarning,
         Key::AccountsSettingsUnsupportedBody,
         Key::AccountsSettingsUnsupportedTitle,
         Key::AccountsSettingsUsedBy,
@@ -4494,17 +4521,17 @@ impl Key {
         Key::AccountsSwitcherHeading,
         Key::AccountsSwitcherMenu,
         Key::AccountsSwitcherNextLaunch,
+        Key::AccountsSwitcherNoFigures,
         Key::AccountsSwitcherNotLoggedIn,
         Key::AccountsSwitcherPercent,
         Key::AccountsSwitcherRestartEverywhere,
         Key::AccountsSwitcherRestartHere,
         Key::AccountsSwitcherRunning,
-        Key::AccountsSwitcherUnknown,
-        Key::AccountsSwitcherUsage,
         Key::AccountsSwitcherUseEverywhere,
         Key::AccountsSwitcherUseEverywhereLabel,
         Key::AccountsSwitcherUseHere,
         Key::AccountsSwitcherWeek,
+        Key::AccountsSwitcherWindow,
         Key::ActivityAppStarted,
         Key::ActivityAppStopped,
         Key::ActivityAsleep,
@@ -6679,9 +6706,13 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.settings.addName", en: Text::plain("Name"), fr: Text::plain("Nom") },
     Message { id: "accounts.settings.addPlaceholder", en: Text::plain("Work, Personal…"), fr: Text::plain("Travail, Perso…") },
     Message { id: "accounts.settings.addTitle", en: Text::plain("Add an account"), fr: Text::plain("Ajouter un compte") },
+    Message { id: "accounts.settings.badge", en: Text::plain("Badge, where the account is named"), fr: Text::plain("Badge, là où le compte est nommé") },
+    Message { id: "accounts.settings.badges", en: Text::plain("Colour the account badges"), fr: Text::plain("Colorer les badges des comptes") },
+    Message { id: "accounts.settings.badgesHint", en: Text::plain("Give each account a tone and an icon, shown wherever its badge is: the navigator, pane headers, the toolbar and the plan block. Off, accounts keep their plain labels."), fr: Text::plain("Donne à chaque compte une couleur et une icône, partout où son badge apparaît\u{202f}: la barre latérale, les en-têtes de panneau, la barre d'outils et le bloc forfait. Désactivé, les comptes gardent leur libellé simple.") },
     Message { id: "accounts.settings.cancel", en: Text::plain("Cancel"), fr: Text::plain("Annuler") },
     Message { id: "accounts.settings.default", en: Text::plain("Default"), fr: Text::plain("Par défaut") },
     Message { id: "accounts.settings.failed", en: Text::plain("Could not do that: {detail}"), fr: Text::plain("Impossible\u{202f}: {detail}") },
+    Message { id: "accounts.settings.iconNone", en: Text::plain("No icon"), fr: Text::plain("Sans icône") },
     Message { id: "accounts.settings.intro", en: Text::plain("Each account is a separate Claude subscription. Choose one per workspace; Hangar never switches on its own when a limit is reached."), fr: Text::plain("Chaque compte est un abonnement Claude distinct. Choisis-en un par workspace\u{202f}; Hangar ne bascule jamais tout seul quand une limite est atteinte.") },
     Message { id: "accounts.settings.listLabel", en: Text::plain("Accounts"), fr: Text::plain("Comptes") },
     Message { id: "accounts.settings.logIn", en: Text::plain("Log in"), fr: Text::plain("Se connecter") },
@@ -6700,6 +6731,11 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.settings.save", en: Text::plain("Save"), fr: Text::plain("Enregistrer") },
     Message { id: "accounts.settings.setDefault", en: Text::plain("Make default"), fr: Text::plain("Définir par défaut") },
     Message { id: "accounts.settings.title", en: Text::plain("Claude accounts"), fr: Text::plain("Comptes Claude") },
+    Message { id: "accounts.settings.toneAccent", en: Text::plain("Accent"), fr: Text::plain("Accent") },
+    Message { id: "accounts.settings.toneDanger", en: Text::plain("Red"), fr: Text::plain("Rouge") },
+    Message { id: "accounts.settings.toneNone", en: Text::plain("Plain"), fr: Text::plain("Sans couleur") },
+    Message { id: "accounts.settings.toneSuccess", en: Text::plain("Green"), fr: Text::plain("Vert") },
+    Message { id: "accounts.settings.toneWarning", en: Text::plain("Amber"), fr: Text::plain("Ambre") },
     Message { id: "accounts.settings.unsupportedBody", en: Text::plain("Logging in to one account here may log another one out. You may have to log in again after switching."), fr: Text::plain("Se connecter à un compte ici peut en déconnecter un autre. Tu devras peut-être te reconnecter après un changement.") },
     Message { id: "accounts.settings.unsupportedTitle", en: Text::plain("Logins are not kept apart on this computer"), fr: Text::plain("Les connexions ne sont pas séparées sur cet ordinateur") },
     Message { id: "accounts.settings.usedBy", en: Text::plain("Used by {names}"), fr: Text::plain("Utilisé par {names}") },
@@ -6712,17 +6748,17 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.switcher.heading", en: Text::plain("This workspace uses"), fr: Text::plain("Ce workspace utilise") },
     Message { id: "accounts.switcher.menu", en: Text::plain("Claude accounts"), fr: Text::plain("Comptes Claude") },
     Message { id: "accounts.switcher.nextLaunch", en: Text::plain("On next launch"), fr: Text::plain("Au prochain lancement") },
+    Message { id: "accounts.switcher.noFigures", en: Text::plain("no figures yet"), fr: Text::plain("pas encore de relevé") },
     Message { id: "accounts.switcher.notLoggedIn", en: Text::plain("not logged in"), fr: Text::plain("non connecté") },
     Message { id: "accounts.switcher.percent", en: Text::plain("{n}%"), fr: Text::plain("{n}\u{202f}%") },
     Message { id: "accounts.switcher.restartEverywhere", en: Text::plain("Restart the agents that follow the default now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents qui suivent le défaut (conversations conservées)") },
     Message { id: "accounts.switcher.restartHere", en: Text::plain("Restart this workspace’s agents now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents de ce workspace (conversations conservées)") },
     Message { id: "accounts.switcher.running", en: Text::plural("{n} agent running.", "{n} agents running."), fr: Text::plural("{n} agent en cours.", "{n} agents en cours.") },
-    Message { id: "accounts.switcher.unknown", en: Text::plain("unknown"), fr: Text::plain("inconnu") },
-    Message { id: "accounts.switcher.usage", en: Text::plain("{five} {fiveValue} · {week} {weekValue}"), fr: Text::plain("{five} {fiveValue} · {week} {weekValue}") },
     Message { id: "accounts.switcher.useEverywhere", en: Text::plain("For every workspace"), fr: Text::plain("Pour tous les workspaces") },
     Message { id: "accounts.switcher.useEverywhereLabel", en: Text::plain("Make {name} the default for every workspace"), fr: Text::plain("Faire de {name} le compte par défaut de tous les workspaces") },
     Message { id: "accounts.switcher.useHere", en: Text::plain("Use {name} in this workspace"), fr: Text::plain("Utiliser {name} dans ce workspace") },
     Message { id: "accounts.switcher.week", en: Text::plain("week"), fr: Text::plain("semaine") },
+    Message { id: "accounts.switcher.window", en: Text::plain("{window} {value}"), fr: Text::plain("{window} {value}") },
     Message { id: "activity.appStarted", en: Text::plain("Hangar started"), fr: Text::plain("Hangar a démarré") },
     Message { id: "activity.appStopped", en: Text::plain("Hangar stopped"), fr: Text::plain("Hangar s'est arrêté") },
     Message { id: "activity.asleep", en: Text::plain("{name} fell asleep"), fr: Text::plain("{name}\u{a0}s'est endormi") },

@@ -13,7 +13,7 @@
 //! else.
 
 use hangar_i18n::{Key, Translator, args};
-use hangar_theme::{style, tokens};
+use hangar_theme::{style as theme_style, tokens};
 use hangar_ui::menu;
 use hangar_ui::{Icon, button as ui_button, icon, layer, text as typography, tip};
 use iced::widget::text::Wrapping;
@@ -26,7 +26,7 @@ use crate::state::WsId;
 
 use super::model::{AccountId, ClaudeAccount, resolve_account};
 use super::switch::{AccountUsage, account_name, usage_percent};
-use super::{Msg, State, live};
+use super::{Msg, State, live, style};
 
 /// What a click on a row changes: the workspace on screen (the main action),
 /// or the default every workspace without an account of its own follows.
@@ -95,23 +95,29 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
             .wrapping(Wrapping::None),
     )
     .max_width(120.0);
+    // The account's own icon and tone when it has them, the bolt otherwise.
+    let chosen = style::of(ctx, &current);
+    let glyph = icon(
+        style::icon_of(chosen).unwrap_or(Icon::Bolt),
+        tokens::size::ICON,
+    );
+    let glyph = match chosen.and_then(|chosen| chosen.tone) {
+        Some(tone) => glyph.color(theme_style::container::tone_text(t, style::tone(tone))),
+        None => glyph,
+    };
     // Centred in the button's height, level with the toolbar's other
     // buttons: a button lays its content out from the top.
     let anchor = button(
         container(
-            row![
-                icon(Icon::Bolt, tokens::size::ICON),
-                label,
-                icon(Icon::ChevronDown, 12.0),
-            ]
-            .spacing(tokens::space::SM)
-            .align_y(Alignment::Center),
+            row![glyph, label, icon(Icon::ChevronDown, 12.0),]
+                .spacing(tokens::space::SM)
+                .align_y(Alignment::Center),
         )
         .center_y(Length::Fill),
     )
     .padding(Padding::from([0.0, tokens::space::MD]))
     .height(tokens::size::CONTROL_HEIGHT)
-    .style(style::button::ghost(t))
+    .style(theme_style::button::ghost(t))
     .on_press(press(Msg::ToggleMenu));
     let anchor = tip::bottom(t, anchor, title);
 
@@ -137,25 +143,39 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
         .into()
 }
 
-fn usage_line(t: Translator, usage: Option<&AccountUsage>) -> String {
-    let show = |value: Option<u8>| match value {
-        None => t.t(Key::AccountsSwitcherUnknown).into_owned(),
-        Some(n) => t
-            .t_with(Key::AccountsSwitcherPercent, &args!("n" => n))
-            .into_owned(),
-    };
-    let five = t.t(Key::AccountsSwitcherFive);
-    let week = t.t(Key::AccountsSwitcherWeek);
-    t.t_with(
-        Key::AccountsSwitcherUsage,
-        &args!(
-            "five" => five.as_ref(),
-            "fiveValue" => show(usage_percent(usage.and_then(|u| u.five_hour.as_ref()))),
-            "week" => week.as_ref(),
-            "weekValue" => show(usage_percent(usage.and_then(|u| u.weekly.as_ref()))),
+/// What is known of an account's limits, one window after the other, or a
+/// single word when nothing is: a window never reported is left out rather
+/// than called « unknown » twice over.
+pub(super) fn usage_line(t: Translator, usage: Option<&AccountUsage>) -> String {
+    let windows = [
+        (
+            Key::AccountsSwitcherFive,
+            usage.and_then(|usage| usage.five_hour.as_ref()),
         ),
-    )
-    .into_owned()
+        (
+            Key::AccountsSwitcherWeek,
+            usage.and_then(|usage| usage.weekly.as_ref()),
+        ),
+    ];
+    let known: Vec<String> = windows
+        .into_iter()
+        .filter_map(|(name, window)| {
+            let n = usage_percent(window)?;
+            let value = t.t_with(Key::AccountsSwitcherPercent, &args!("n" => n));
+            Some(
+                t.t_with(
+                    Key::AccountsSwitcherWindow,
+                    &args!("window" => t.t(name).as_ref(), "value" => value.as_ref()),
+                )
+                .into_owned(),
+            )
+        })
+        .collect();
+    if known.is_empty() {
+        t.t(Key::AccountsSwitcherNoFigures).into_owned()
+    } else {
+        known.join(" · ")
+    }
 }
 
 /// The list: a heading and a row per account.
@@ -200,20 +220,28 @@ fn account_row<'a>(
     } else {
         Space::new().width(tokens::size::ICON).into()
     };
-    let mut name = row![text(account.label.as_str()).size(tokens::font_size::BODY)];
-    if !account.logged_in {
-        name = name.push(
-            text(format!(" · {}", ctx.t(Key::AccountsSwitcherNotLoggedIn)))
-                .size(tokens::font_size::BODY)
-                .style(style::text::muted(t)),
-        );
-    }
+    let name = style::label(
+        t,
+        style::of(ctx, &account.id),
+        account.label.clone(),
+        tokens::font_size::BODY,
+        t.colors.fg,
+    );
+    // Not logged in says so on the second line, where the figures would be:
+    // the name keeps its line whatever the language.
+    let detail = if account.logged_in {
+        usage_line(ctx.i18n, usage)
+    } else {
+        ctx.t(Key::AccountsSwitcherNotLoggedIn).into_owned()
+    };
     let lines = column![
-        name,
-        text(usage_line(ctx.i18n, usage))
+        container(name).width(Length::Fill).clip(true),
+        text(detail)
             .size(tokens::font_size::LABEL)
-            .style(style::text::muted(t)),
-    ];
+            .style(theme_style::text::muted(t)),
+    ]
+    .spacing(tokens::space::XXS)
+    .width(Length::Fill);
     let main = button(
         row![mark, lines]
             .spacing(tokens::space::MD)
@@ -221,7 +249,7 @@ fn account_row<'a>(
     )
     .width(Length::Fill)
     .padding(Padding::from([tokens::space::XS, tokens::space::MD]))
-    .style(style::button::menu_item(t))
+    .style(theme_style::button::menu_item(t))
     .on_press(press(Msg::Choose {
         ws: ws.clone(),
         id: account.id.clone(),
@@ -243,13 +271,13 @@ fn account_row<'a>(
     let every_text =
         text(ctx.t(Key::AccountsSwitcherUseEverywhere)).size(tokens::font_size::CAPTION);
     let every_text = if is_default {
-        every_text.style(style::text::accent(t))
+        every_text.style(theme_style::text::accent(t))
     } else {
         every_text
     };
     let every = button(every_text)
         .padding(Padding::from([tokens::space::XS, tokens::space::MD]))
-        .style(style::button::menu_item(t))
+        .style(theme_style::button::menu_item(t))
         .on_press(press(Msg::Choose {
             ws: ws.clone(),
             id: account.id.clone(),

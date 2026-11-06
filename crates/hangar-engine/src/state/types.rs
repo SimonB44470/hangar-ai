@@ -16,6 +16,8 @@
 //!   settings), and a malformed one is read leniently (`lenient.rs`), since a
 //!   strict parse error would quarantine the person's workspaces.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -595,8 +597,93 @@ pub struct Settings {
     /// only when there is one, so a file from before stays as it was.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeConfig>,
+    /// Account badges wear the tone and icon chosen for each account
+    /// (`accountStyles`); off, they are the plain labels they always were.
+    /// Written only when on, so a file from before stays as it was.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub account_badges: bool,
+    /// How each Claude account is marked where its badge shows, by account
+    /// id (`accountStyles`). Written only when one has a style, so a file
+    /// from before stays as it was.
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        deserialize_with = "account_styles"
+    )]
+    pub account_styles: BTreeMap<String, AccountStyle>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// The colours an account's badge can take: the theme's own tones, so a badge
+/// reads on every theme, light or dark, as the other badges of Hangar do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AccountTone {
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl AccountTone {
+    /// In the order the settings offer them.
+    pub const ALL: [AccountTone; 4] = [
+        AccountTone::Accent,
+        AccountTone::Success,
+        AccountTone::Warning,
+        AccountTone::Danger,
+    ];
+}
+
+/// What the person chose for an account's badge: a tone, an icon (a name of
+/// Hangar's icon set), or neither. Keys this version does not know are kept.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct AccountStyle {
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "tone_or_none"
+    )]
+    pub tone: Option<AccountTone>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "text_or_none"
+    )]
+    pub icon: Option<String>,
+    #[serde(flatten)]
+    pub extra: Extra,
+}
+
+impl AccountStyle {
+    /// Nothing chosen and nothing kept: the entry can go.
+    pub fn is_empty(&self) -> bool {
+        self.tone.is_none() && self.icon.is_none() && self.extra.is_empty()
+    }
+}
+
+/// A tone this version does not know reads as none, rather than costing the
+/// account its icon.
+fn tone_or_none<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<AccountTone>, D::Error> {
+    Ok(serde_json::from_value(Value::deserialize(deserializer)?).ok())
+}
+
+/// The styles by account; an entry that is not an object costs only itself.
+fn account_styles<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<BTreeMap<String, AccountStyle>, D::Error> {
+    let Value::Object(entries) = Value::deserialize(deserializer)? else {
+        return Ok(BTreeMap::new());
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|(id, style)| {
+            serde_json::from_value::<AccountStyle>(style)
+                .ok()
+                .map(|style| (id, style))
+        })
+        .collect())
 }
 
 /// A machine reached over SSH that runs `hangar-node` (docs/native/nodes.md
@@ -724,6 +811,8 @@ impl Default for Settings {
             kits_everywhere: None,
             projects_folder: None,
             nodes: Vec::new(),
+            account_badges: false,
+            account_styles: BTreeMap::new(),
             extra: Map::new(),
         }
     }

@@ -775,6 +775,37 @@ mod tests {
     }
 
     #[test]
+    fn account_styles_are_read_one_by_one_and_what_is_unknown_is_kept() {
+        let file = json!({
+            "settings": {"accountStyles": {
+                "perso": {"tone": "success", "icon": "gamepad"},
+                "pro": {"tone": "rainbow", "color": "#ff0000", "badge": "PRO"},
+                "broken": 3
+            }}
+        });
+        let (state, _) = read(file);
+        let styles = &state.settings.account_styles;
+        assert_eq!(
+            styles["perso"].tone,
+            Some(crate::state::types::AccountTone::Success)
+        );
+        assert_eq!(styles["perso"].icon.as_deref(), Some("gamepad"));
+        // A tone this version does not know is none; another app's keys stay.
+        assert_eq!(styles["pro"].tone, None);
+        assert_eq!(styles["pro"].extra["badge"], json!("PRO"));
+        assert!(!styles.contains_key("broken"));
+        let written = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            written["settings"]["accountStyles"]["perso"],
+            json!({"tone": "success", "icon": "gamepad"})
+        );
+        assert_eq!(app_state(written), state);
+        // No style, no key: a file from before is written back as it was.
+        let plain = serde_json::to_value(app_state(json!({"settings": {}}))).unwrap();
+        assert!(plain["settings"].get("accountStyles").is_none());
+    }
+
+    #[test]
     fn anything_but_an_object_is_the_empty_state() {
         assert_eq!(app_state(json!([1, 2])), AppState::default());
         assert_eq!(app_state(Value::Null), AppState::default());

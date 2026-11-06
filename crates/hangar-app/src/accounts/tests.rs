@@ -103,16 +103,16 @@ fn the_list_has_a_row_per_account_with_its_figures_and_both_scopes() {
         t.t(hangar_i18n::Key::AccountsSwitcherWeek),
     );
     let reported = format!("{five} 40% · {week} 55%");
-    let unknown = format!("{five} unknown · {week} unknown");
     for text in [
         "This workspace uses",
         "Perso",
         "Travail",
-        " · not logged in",
+        "not logged in",
         "For every workspace",
-        // Figures of the account that reported, « unknown » for the others.
+        // Figures of the account that reported, one word for the one that
+        // has none yet.
         reported.as_str(),
-        unknown.as_str(),
+        "no figures yet",
     ] {
         assert!(ui.find(text).is_ok(), "{text} is in the menu");
     }
@@ -1049,4 +1049,157 @@ fn usage_is_not_saved_before_the_file_was_read() {
     assert!(usage_arrived(&mut st, &mut h.model, Usage::default()));
     assert!(may_save(&mut st));
     assert!(!usage_arrived(&mut st, &mut h.model, Usage::default()));
+}
+
+// ── the badges' styles and the plan per account ───────────────────────
+
+fn styled(h: Harness) -> Harness {
+    h.edit(|state| {
+        state.settings.account_badges = true;
+        state.settings.account_styles = std::collections::BTreeMap::from([
+            (
+                "main".to_string(),
+                crate::state::AccountStyle {
+                    tone: Some(crate::state::AccountTone::Warning),
+                    icon: Some("bolt".into()),
+                    ..Default::default()
+                },
+            ),
+            (
+                "perso".to_string(),
+                crate::state::AccountStyle {
+                    tone: Some(crate::state::AccountTone::Success),
+                    icon: Some("gamepad".into()),
+                    ..Default::default()
+                },
+            ),
+        ]);
+    })
+}
+
+fn reported(h: &mut Harness) {
+    h.model.live.accounts.usage = std::collections::BTreeMap::from([
+        (
+            "main".to_string(),
+            AccountUsage {
+                five_hour: window(37.0),
+                weekly: window(22.0),
+            },
+        ),
+        (
+            "perso".to_string(),
+            AccountUsage {
+                five_hour: window(93.0),
+                weekly: None,
+            },
+        ),
+    ]);
+}
+
+#[test]
+fn a_styled_account_wears_its_badge_in_the_navigator_and_the_menu() {
+    let mut h = styled(Harness::new(Locale::En, "graphite"));
+    reported(&mut h);
+    let own = ws("w2");
+    let mut ui = h.show(badge(h.ctx(), &own));
+    assert!(ui.find("Perso").is_ok());
+    h.shot(&mut ui, "accounts-badge-styled-en-graphite");
+
+    let mut st = State::default();
+    st.switcher = Menu::Open;
+    let mut ui = h.show(toolbar(switcher(&st, h.ctx())));
+    let t = hangar_i18n::Translator::new(Locale::En);
+    let five = t.t(hangar_i18n::Key::AccountsSwitcherFive);
+    // Only the windows an account reported: Perso has no weekly figure.
+    for text in [format!("{five} 93%"), "not logged in".to_string()] {
+        assert!(ui.find(text.as_str()).is_ok(), "{text} is in the menu");
+    }
+    h.shot(&mut ui, "accounts-switcher-styled-en-graphite");
+}
+
+#[test]
+fn the_menu_keeps_each_name_on_its_line_in_a_narrow_language() {
+    let mut h = styled(Harness::new(Locale::Fr, "github-light"));
+    reported(&mut h);
+    let mut st = State::default();
+    st.switcher = Menu::Open;
+    let mut ui = h.show(toolbar(switcher(&st, h.ctx())));
+    let name = ui.find("Travail").expect("the name").bounds();
+    let detail = ui.find("non connecté").expect("its state").bounds();
+    assert!(
+        name.y + name.height <= detail.y,
+        "the name and its state share a line: {name:?} and {detail:?}"
+    );
+    h.shot(&mut ui, "accounts-switcher-styled-fr-github-light");
+}
+
+#[test]
+fn the_page_offers_a_tone_and_an_icon_and_a_choice_is_kept() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    let st = State::default();
+    let mut page = Page::default();
+    {
+        // Off by default: the page offers the switch, not the choices.
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        let t = hangar_i18n::Translator::new(Locale::En);
+        let hint = t.t(hangar_i18n::Key::AccountsSettingsBadgesHint);
+        assert!(ui.find(hint.as_ref()).is_ok());
+        assert!(ui.find("Badge, where the account is named").is_err());
+    }
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetBadges(true));
+    assert!(h.model.settings().account_badges);
+    {
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        assert!(ui.find("Badge, where the account is named").is_ok());
+        assert!(ui.find("No icon").is_ok());
+        h.shot(&mut ui, "accounts-page-badges-en-graphite");
+    }
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::SetTone("perso".into(), Some(crate::state::AccountTone::Success)),
+    );
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::SetIcon("perso".into(), Some("gamepad".into())),
+    );
+    let kept = &h.model.settings().account_styles["perso"];
+    assert_eq!(kept.tone, Some(crate::state::AccountTone::Success));
+    assert_eq!(kept.icon.as_deref(), Some("gamepad"));
+    {
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        h.shot(&mut ui, "accounts-page-badges-chosen-en-graphite");
+    }
+
+    // Taking both back leaves nothing in the file.
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetTone("perso".into(), None));
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetIcon("perso".into(), None));
+    assert!(h.model.settings().account_styles.is_empty());
+}
+
+#[test]
+fn with_badges_off_every_account_keeps_its_plain_label() {
+    let h = styled(Harness::new(Locale::En, "graphite")).edit(|state| {
+        state.settings.account_badges = false;
+    });
+    // The choices stay kept for when the badges are turned on again...
+    assert!(h.model.settings().account_styles.contains_key("perso"));
+    // ...but nothing reads them while they are off.
+    assert!(super::style::of(h.ctx(), "perso").is_none());
+    assert!(super::style::of(h.ctx(), "main").is_none());
+}
+
+#[test]
+fn a_removed_account_takes_its_badge_with_it() {
+    let mut h = styled(Harness::new(Locale::En, "graphite"));
+    let mut page = Page::default();
+    page.busy = true;
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::Removed("perso".into(), Ok(())),
+    );
+    assert!(!h.model.settings().account_styles.contains_key("perso"));
+    assert!(h.model.settings().account_styles.contains_key("main"));
 }

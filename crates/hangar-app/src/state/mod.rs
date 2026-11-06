@@ -39,7 +39,8 @@ pub use store::{
 };
 #[allow(unused_imports)]
 pub use types::{
-    AgentId, AppState, Pane, PaneId, Settings, SplitDir, SplitNode, ViewPane, Workspace, WsId,
+    AccountStyle, AccountTone, AgentId, AppState, Pane, PaneId, Settings, SplitDir, SplitNode,
+    ViewPane, Workspace, WsId,
 };
 
 use crate::shell::{Drawer, View, WindowKind};
