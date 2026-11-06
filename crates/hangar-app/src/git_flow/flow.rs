@@ -62,6 +62,9 @@ pub struct NewWorkspace {
     /// The person asked in Hangar, so it comes to the front; an agent's
     /// request leaves the person where they were.
     pub activate: bool,
+    /// The navigator folder it is filed in, when the dialog was opened from
+    /// one (`AppDeps::file_in`); the folder's account then applies.
+    pub folder_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -553,6 +556,7 @@ async fn proceed<D: FromGitDeps>(
                 name: name.to_string(),
                 cwd: path.clone(),
                 activate: from_person,
+                folder_id: None,
             })
             .await?;
         made = Some(created.clone());

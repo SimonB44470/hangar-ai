@@ -242,6 +242,90 @@ fn a_workspace_moved_into_a_folder_deleted_meanwhile_lands_at_the_top_level() {
     assert_eq!(ws(&m, &b).folder_id, None);
 }
 
+/// A folder whose default account is `account`; answers its id.
+fn folder_on(m: &mut Store, account: Option<&str>) -> String {
+    let id = m
+        .apply(StoreAction::AddFolder("Games".into()))
+        .folder
+        .unwrap();
+    let account = account.map(str::to_string);
+    m.apply(StoreAction::UpdateFolder(
+        id.clone(),
+        Patch::new(move |folder: &mut WorkspaceFolder| folder.claude_account = account.clone()),
+    ));
+    id
+}
+
+#[test]
+fn a_workspace_made_in_a_folder_starts_on_its_account_unless_it_chose_one() {
+    let mut m = model();
+    let games = folder_on(&mut m, Some("perso"));
+    let made = |m: &mut Store, account: Option<&str>| {
+        m.apply(StoreAction::AddWorkspace(WorkspaceDraft {
+            folder_id: Some(games.clone()),
+            claude_account: account.map(str::to_string),
+            ..draft(1, &[])
+        }))
+        .workspace
+        .unwrap()
+    };
+    let plain = made(&mut m, None);
+    assert_eq!(ws(&m, &plain).claude_account.as_deref(), Some("perso"));
+    let chosen = made(&mut m, Some("pro"));
+    assert_eq!(ws(&m, &chosen).claude_account.as_deref(), Some("pro"));
+    // A folder without a default changes nothing.
+    let loose = folder_on(&mut m, None);
+    let w = m
+        .apply(StoreAction::AddWorkspace(WorkspaceDraft {
+            folder_id: Some(loose),
+            ..draft(1, &[])
+        }))
+        .workspace
+        .unwrap();
+    assert_eq!(ws(&m, &w).claude_account, None);
+}
+
+#[test]
+fn a_workspace_moved_into_a_folder_takes_its_account_only_when_it_has_none() {
+    let mut m = model();
+    let games = folder_on(&mut m, Some("perso"));
+    let free = with_workspace(&mut m, 1, &[]);
+    let own = with_workspace(&mut m, 1, &[]);
+    m.apply(StoreAction::UpdateWorkspace(
+        own.clone(),
+        Patch::new(|ws: &mut Workspace| ws.claude_account = Some("pro".into())),
+    ));
+    for id in [&free, &own] {
+        m.apply(StoreAction::MoveWorkspace {
+            id: id.clone(),
+            folder: Some(games.clone()),
+            before: None,
+        });
+    }
+    assert_eq!(ws(&m, &free).claude_account.as_deref(), Some("perso"));
+    assert_eq!(ws(&m, &own).claude_account.as_deref(), Some("pro"));
+    // Leaving the folder keeps what it runs on.
+    m.apply(StoreAction::MoveWorkspace {
+        id: free.clone(),
+        folder: None,
+        before: None,
+    });
+    assert_eq!(ws(&m, &free).claude_account.as_deref(), Some("perso"));
+}
+
+#[test]
+fn a_folders_account_is_written_only_when_set_and_read_back() {
+    let mut m = model();
+    let plain = folder_on(&mut m, None);
+    let games = folder_on(&mut m, Some("perso"));
+    let written = serde_json::to_value(m.state()).unwrap();
+    let folders = written["folders"].as_array().unwrap();
+    let of = |id: &str| folders.iter().find(|f| f["id"] == id).unwrap().clone();
+    assert!(of(&plain).get("claudeAccount").is_none());
+    assert_eq!(of(&games)["claudeAccount"], "perso");
+    assert_eq!(crate::state::read_state(written), *m.state());
+}
+
 // presets and tidying
 
 #[test]

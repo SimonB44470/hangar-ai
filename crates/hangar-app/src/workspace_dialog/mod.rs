@@ -223,6 +223,12 @@ pub struct State {
     git: Git,
     /// The workspace whose kits are open (`Overlay::KitsDialog`).
     kits: Option<kits_dialog::KitsDialog>,
+    /// The navigator folder the new workspace is filed in, when the form was
+    /// opened from one.
+    in_folder: Option<String>,
+    /// The folder the form is about to open for (`NewWorkspaceInFolder`),
+    /// taken when it does.
+    next_folder: Option<String>,
 }
 
 /// The package's shared read-model, which other packages may read; lives in
@@ -379,6 +385,16 @@ impl State {
     /// A clean form, as when the dialog opens.
     fn reset(&mut self) {
         *self = State::default();
+    }
+
+    /// The name of the folder the workspace is filed in, while it exists.
+    pub(crate) fn target_folder<'a>(&self, m: &'a Model) -> Option<&'a str> {
+        let id = self.in_folder.as_deref()?;
+        m.state()
+            .folders
+            .iter()
+            .find(|folder| folder.id == id)
+            .map(|folder| folder.name.as_str())
     }
 }
 
@@ -1065,7 +1081,7 @@ fn submit_folder(st: &mut State, m: &mut Model, kits: &[WorkspaceKit]) -> Task<M
     // A workspace on a node takes no kit: kits of remote files come later.
     let kits: &[WorkspaceKit] = if remote.is_some() { &[] } else { kits };
     let start = start_of(st, m);
-    let Some(draft) = folder::draft_of(&FolderForm {
+    let Some(mut draft) = folder::draft_of(&FolderForm {
         name: &st.name,
         cwd: &st.folder.cwd,
         roots: &st.folder.roots,
@@ -1078,6 +1094,11 @@ fn submit_folder(st: &mut State, m: &mut Model, kits: &[WorkspaceKit]) -> Task<M
     }) else {
         return Task::none();
     };
+    // A folder removed while the form was open files it nowhere.
+    draft.folder_id = st
+        .in_folder
+        .clone()
+        .filter(|id| m.state().folders.iter().any(|folder| folder.id == *id));
     let mut tasks = vec![close(m)];
     let hooks = folder::hooks_of(&st.folder.hooks);
     if let Some(id) = make_workspace(m, draft, remote, hooks, start) {
@@ -1113,7 +1134,10 @@ fn start_git(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
         origin: GitOrigin::Person,
         asker_cwd: m.active_workspace().map(|ws| ws.cwd.clone()),
     };
-    let deps = AppDeps::new(sv).clone_into(parent).job(job.clone());
+    let deps = AppDeps::new(sv)
+        .clone_into(parent)
+        .job(job.clone())
+        .file_in(st.in_folder.clone());
     Task::perform(
         async move { crate::git_flow::run(&request, &deps).await },
         move |outcome| {
@@ -1267,10 +1291,13 @@ pub fn on_intent(
 ) -> Option<Task<Message>> {
     match intent {
         Intent::OpenOverlay(Overlay::WorkspaceDialog) => {
-            opened(st);
+            opened(st, m);
             Some(Task::none())
         }
         Intent::OpenOnAnotherMachine(ws) => Some(open_elsewhere(st, m, ws)),
+        // The same form, for a workspace filed in that folder: noted, then
+        // opened as any other way does (the kits section resets with it).
+        Intent::NewWorkspaceInFolder(folder) => Some(open_in_folder(st, folder)),
         Intent::OpenOverlay(Overlay::KitsDialog(ws)) | Intent::OpenKitsDialog(ws) => {
             st.kits = kits_dialog::KitsDialog::open(m, ws);
             Some(Task::none())
@@ -1316,10 +1343,28 @@ fn open_elsewhere(st: &mut State, m: &Model, ws: &str) -> Task<Message> {
 /// The dialog opens: the form starts clean, unless a clone is still running
 /// from when it was closed, which shows its progress again. (The kits section
 /// empties its own draft when the same intent reaches it.)
-fn opened(st: &mut State) {
+///
+/// Opened from a folder, the workspace is filed there, and the account picker
+/// starts on the folder's account when it names one.
+fn opened(st: &mut State, m: &Model) {
+    let next = st.next_folder.take();
     if !st.git.running {
         st.reset();
     }
+    if let Some(folder) = next.filter(|id| m.state().folders.iter().any(|f| f.id == *id)) {
+        st.folder.claude_account =
+            crate::state::folders::default_account(&m.state().folders, Some(&folder));
+        st.in_folder = Some(folder);
+    }
+}
+
+/// The form, for a workspace filed in `folder`: noted, then opened as any
+/// other way opens it.
+fn open_in_folder(st: &mut State, folder: &str) -> Task<Message> {
+    st.next_folder = Some(folder.to_string());
+    Task::done(Message::Intent(Intent::OpenOverlay(
+        Overlay::WorkspaceDialog,
+    )))
 }
 
 /// Keeps the progress of the clone this dialog follows (the bus carries every

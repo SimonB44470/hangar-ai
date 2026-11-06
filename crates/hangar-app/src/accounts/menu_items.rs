@@ -67,6 +67,58 @@ fn radio(item: AccountMenuItem, pick: impl Fn(Option<String>) -> Message) -> Men
     }
 }
 
+/// The account lines of a navigator folder's menu: « None » first (its new
+/// workspaces follow the default), then one per account, the folder's choice
+/// checked. Nothing before the accounts are known, nor with a single account,
+/// where there is nothing to choose.
+pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
+    let Some(accounts) = live(ctx).accounts.as_deref().filter(|all| all.len() > 1) else {
+        return Vec::new();
+    };
+    let Some(entry) = ctx
+        .model
+        .state()
+        .folders
+        .iter()
+        .find(|entry| entry.id == folder)
+    else {
+        return Vec::new();
+    };
+    let own = read_account_choice(entry.claude_account.as_deref())
+        .filter(|own| accounts.iter().any(|account| account.id == *own));
+    let pick = |id: Option<String>| {
+        Message::Accounts(Msg::SetFolder {
+            folder: folder.to_string(),
+            id,
+        })
+    };
+    let mut entries = vec![
+        MenuEntry::Separator,
+        MenuEntry::Heading(ctx.t(Key::AccountsMenuFolderTitle).into_owned()),
+        radio(
+            AccountMenuItem {
+                key: "none".into(),
+                label: ctx.t(Key::AccountsMenuFolderNone).into_owned(),
+                checked: own.is_none(),
+                select: None,
+            },
+            pick,
+        ),
+    ];
+    entries.extend(accounts.iter().map(|account| {
+        radio(
+            AccountMenuItem {
+                key: account.id.clone(),
+                label: account.label.clone(),
+                checked: own.as_deref() == Some(account.id.as_str()),
+                select: Some(account.id.clone()),
+            },
+            pick,
+        )
+    }));
+    entries
+}
+
 /// The account lines of the navigator's menu (`pane` `None`: the workspace's
 /// own choice) or of a pane's menu (that pane's own choice, over its
 /// workspace's). Nothing before the accounts are known, and nothing for a

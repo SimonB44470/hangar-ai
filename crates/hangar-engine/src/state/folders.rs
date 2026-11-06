@@ -28,6 +28,17 @@ pub fn sidebar_order<'a>(
     loose.chain(filed).collect()
 }
 
+/// The account a workspace filed in `folder` starts on, if that folder names
+/// one: a workspace made there, or moved there without an account of its
+/// own. A folder that is gone, or that names none, gives nothing.
+pub fn default_account(folders: &[WorkspaceFolder], folder: Option<&str>) -> Option<String> {
+    let folder = folders
+        .iter()
+        .find(|entry| Some(entry.id.as_str()) == folder)?;
+    let id = folder.claude_account.as_deref()?.trim();
+    (!id.is_empty()).then(|| id.to_string())
+}
+
 /// Something with an id, for `place_before`.
 pub trait Keyed {
     fn key(&self) -> &str;
@@ -145,6 +156,23 @@ mod tests {
     fn is_the_stored_order_when_there_are_no_folders() {
         let workspaces = [ws("c", None), ws("a", None), ws("b", None)];
         assert_eq!(ids(&sidebar_order(&workspaces, &[])), ["c", "a", "b"]);
+    }
+
+    #[test]
+    fn a_folders_default_account_is_its_own_trimmed_choice() {
+        let mut games = folder("games");
+        games.claude_account = Some(" perso ".into());
+        let mut blank = folder("blank");
+        blank.claude_account = Some("  ".into());
+        let folders = [games, blank, folder("plain")];
+        assert_eq!(
+            default_account(&folders, Some("games")).as_deref(),
+            Some("perso")
+        );
+        assert_eq!(default_account(&folders, Some("blank")), None);
+        assert_eq!(default_account(&folders, Some("plain")), None);
+        assert_eq!(default_account(&folders, Some("gone")), None);
+        assert_eq!(default_account(&folders, None), None);
     }
 
     #[test]

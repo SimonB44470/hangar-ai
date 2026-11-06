@@ -437,6 +437,11 @@ pub struct WorkspaceFolder {
     pub id: String,
     pub name: String,
     pub collapsed: bool,
+    /// The Claude account a workspace starts on when it is made in this
+    /// folder or moved into it without an account of its own. Written only
+    /// when set, so a file from before stays as it was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claude_account: Option<String>,
     #[serde(flatten)]
     pub extra: Extra,
 }

@@ -327,3 +327,63 @@ fn a_rename_in_place_is_settled_with_enter_and_called_off_with_escape() {
 
 /// The y of the filter bar's middle in the test window (700 px tall, bar 36).
 const WINDOW_BOTTOM_BAR: f32 = 700.0 - 18.0;
+
+#[test]
+fn a_hovered_folder_offers_a_new_workspace_filed_in_it() {
+    let mut st = State::default();
+    st.hover = Some("folder:work".into());
+    // Where the heading is: its name, upper-cased.
+    let heading = {
+        let pkg = Packages::default();
+        let m = model();
+        let framed = iced::widget::container(view(&st, ctx(&m, &pkg)))
+            .width(hangar_theme::tokens::size::SIDEBAR_WIDTH)
+            .height(iced::Length::Fill);
+        let mut ui = simulate(framed);
+        let bounds = ui.find("WORK").expect("the folder's heading").bounds();
+        // Drawn to `<folder>/navigator-folder-hover-tiny-skia.png` when
+        // `HANGAR_P8_SNAPSHOTS` names a folder.
+        if let Some(folder) = std::env::var_os("HANGAR_P8_SNAPSHOTS") {
+            let folder = std::path::PathBuf::from(folder);
+            std::fs::create_dir_all(&folder).expect("the folder");
+            let _ = std::fs::remove_file(folder.join("navigator-folder-hover-tiny-skia.png"));
+            ui.snapshot(&hangar_theme::to_iced(m.theme()))
+                .expect("the navigator can be drawn")
+                .matches_image(folder.join("navigator-folder-hover"))
+                .expect("the picture can be written");
+        }
+        bounds
+    };
+    let y = heading.y + heading.height / 2.0;
+    // The buttons sit at the row's end: the plus is left of the « … ».
+    let width = hangar_theme::tokens::size::SIDEBAR_WIDTH;
+    let found = (0..40).any(|step| {
+        let x = width - 8.0 - step as f32 * 2.0;
+        run(&st, &model(), |ui| {
+            ui.move_to(x, y);
+            ui.press(mouse::Button::Left);
+            ui.release(mouse::Button::Left);
+        })
+        .iter()
+        .any(|message| {
+            matches!(message, Message::Intent(Intent::NewWorkspaceInFolder(id)) if id == "work")
+        })
+    });
+    assert!(
+        found,
+        "no button at the folder row's end opens the form for it"
+    );
+    // Without the pointer on it, the row shows no button.
+    let calm = State::default();
+    let found = (0..40).any(|step| {
+        let x = width - 8.0 - step as f32 * 2.0;
+        run(&calm, &model(), |ui| {
+            ui.move_to(x, y);
+            ui.press(mouse::Button::Left);
+            ui.release(mouse::Button::Left);
+        })
+        .iter()
+        .any(|message| matches!(message, Message::Intent(Intent::NewWorkspaceInFolder(_))))
+    });
+    assert!(!found);
+}

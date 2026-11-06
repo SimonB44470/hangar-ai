@@ -980,16 +980,17 @@ fn the_progress_of_the_clone_followed_is_kept_and_another_clones_is_not() {
 
 #[test]
 fn opening_the_dialog_starts_a_clean_form_unless_a_clone_is_still_running() {
+    let h = Harness::new(Locale::En, "graphite");
     let mut st = git_state("acme/shop", None);
     st.name = "left over".into();
-    opened(&mut st);
+    opened(&mut st, &h.model);
     assert!(st.name.is_empty() && st.git.repo.is_empty());
     assert_eq!(st.source, Source::Folder);
 
     // The dialog was closed with a clone running: it comes back as it was.
     let mut st = running("job-1");
     st.name = "shop".into();
-    opened(&mut st);
+    opened(&mut st, &h.model);
     assert!(st.git.running);
     assert_eq!(st.name, "shop");
     assert_eq!(st.git.repo, "acme/shop");
@@ -1273,7 +1274,7 @@ fn a_workspace_file_read_does_not_fill_a_form_reset_since() {
     let _ = form(&mut st, &mut m, Msg::UseSuggestion);
     let read = st.folder.reading.expect("a read is pending");
     // Closed and opened again.
-    opened(&mut st);
+    opened(&mut st, &m);
     let _ = form(
         &mut st,
         &mut m,
@@ -2155,4 +2156,77 @@ fn opening_a_repository_elsewhere_readies_the_clone_form() {
     let _ = open_elsewhere(&mut st, &h.model, "w1");
     assert_eq!(st.source, Source::Folder);
     assert_eq!(st.place.node, None);
+}
+
+// ── a workspace made from a navigator folder ──────────────────────────
+
+/// The harness with a folder « Games » on the account « perso ».
+fn with_games(account: Option<&str>) -> Harness {
+    let account = account.map(str::to_string);
+    Harness::new(Locale::En, "graphite").edit(move |state| {
+        state.folders = vec![crate::state::types::WorkspaceFolder {
+            id: "games".into(),
+            name: "Games".into(),
+            claude_account: account.clone(),
+            ..Default::default()
+        }];
+    })
+}
+
+#[test]
+fn opened_from_a_folder_the_form_files_the_workspace_there_on_its_account() {
+    let mut h = with_games(Some("perso"));
+    let mut st = State::default();
+    let _ = open_in_folder(&mut st, "games");
+    opened(&mut st, &h.model);
+    assert_eq!(st.in_folder.as_deref(), Some("games"));
+    assert_eq!(st.folder.claude_account.as_deref(), Some("perso"));
+    assert_eq!(st.target_folder(&h.model), Some("Games"));
+
+    let _ = form(&mut st, &mut h.model, Msg::Cwd("/home/me/dev/game".into()));
+    let _ = submit_folder(&mut st, &mut h.model, &[]);
+    let made = h
+        .model
+        .state()
+        .workspaces
+        .iter()
+        .find(|ws| ws.cwd == "/home/me/dev/game")
+        .expect("the workspace is made");
+    assert_eq!(made.folder_id.as_deref(), Some("games"));
+    assert_eq!(made.claude_account.as_deref(), Some("perso"));
+}
+
+#[test]
+fn opened_the_usual_way_the_form_files_nothing() {
+    let h = with_games(Some("perso"));
+    let mut st = State::default();
+    st.in_folder = Some("games".into());
+    opened(&mut st, &h.model);
+    assert_eq!(st.in_folder, None);
+    assert_eq!(st.folder.claude_account, None);
+}
+
+#[test]
+fn a_folder_without_an_account_leaves_the_picker_on_the_default() {
+    let h = with_games(None);
+    let mut st = State::default();
+    st.next_folder = Some("games".into());
+    opened(&mut st, &h.model);
+    assert_eq!(st.in_folder.as_deref(), Some("games"));
+    assert_eq!(st.folder.claude_account, None);
+}
+
+#[test]
+fn the_dialog_says_which_folder_the_workspace_goes_in() {
+    let mut h = with_games(Some("perso"));
+    let mut st = State::default();
+    st.next_folder = Some("games".into());
+    opened(&mut st, &h.model);
+    h.model
+        .ui
+        .overlays
+        .push(crate::shell::Overlay::WorkspaceDialog);
+    let mut ui = h.show(view(&st, h.ctx()));
+    assert!(ui.find("In the Games folder").is_ok());
+    h.shot(&mut ui, "create-in-folder-en-graphite");
 }

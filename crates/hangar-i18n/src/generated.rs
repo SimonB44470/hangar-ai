@@ -16,6 +16,10 @@ use crate::dictionary::{Message, Text};
 pub enum Key {
     /// `accounts.badge.title`
     AccountsBadgeTitle,
+    /// `accounts.menu.folderNone`
+    AccountsMenuFolderNone,
+    /// `accounts.menu.folderTitle`
+    AccountsMenuFolderTitle,
     /// `accounts.menu.title`
     AccountsMenuTitle,
     /// `accounts.pane.badgeTitle`
@@ -858,6 +862,8 @@ pub enum Key {
     CreateGitStop,
     /// `create.gitSubmit`
     CreateGitSubmit,
+    /// `create.inFolder`
+    CreateInFolder,
     /// `create.layout`
     CreateLayout,
     /// `create.layoutHint`
@@ -3626,6 +3632,8 @@ pub enum Key {
     SidebarFolderDefault,
     /// `sidebar.folderEmpty`
     SidebarFolderEmpty,
+    /// `sidebar.folderNewWorkspace`
+    SidebarFolderNewWorkspace,
     /// `sidebar.folderSize`
     SidebarFolderSize,
     /// `sidebar.goTo`
@@ -4443,12 +4451,14 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2213;
+pub const KEY_COUNT: usize = 2217;
 
 impl Key {
     /// Every key, in the order of their ids.
     pub const ALL: [Key; KEY_COUNT] = [
         Key::AccountsBadgeTitle,
+        Key::AccountsMenuFolderNone,
+        Key::AccountsMenuFolderTitle,
         Key::AccountsMenuTitle,
         Key::AccountsPaneBadgeTitle,
         Key::AccountsPaneMenuHeading,
@@ -4870,6 +4880,7 @@ impl Key {
         Key::CreateGitStarting,
         Key::CreateGitStop,
         Key::CreateGitSubmit,
+        Key::CreateInFolder,
         Key::CreateLayout,
         Key::CreateLayoutHint,
         Key::CreateLess,
@@ -6254,6 +6265,7 @@ impl Key {
         Key::SidebarFilterLabel,
         Key::SidebarFolderDefault,
         Key::SidebarFolderEmpty,
+        Key::SidebarFolderNewWorkspace,
         Key::SidebarFolderSize,
         Key::SidebarGoTo,
         Key::SidebarHide,
@@ -6667,6 +6679,8 @@ impl Key {
 /// The messages, sorted by id (byte order), one per `Key`.
 pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.badge.title", en: Text::plain("Claude account: {name}"), fr: Text::plain("Compte Claude\u{202f}: {name}") },
+    Message { id: "accounts.menu.folderNone", en: Text::plain("None (the default)"), fr: Text::plain("Aucun (le défaut)") },
+    Message { id: "accounts.menu.folderTitle", en: Text::plain("Account for its new workspaces"), fr: Text::plain("Compte de ses nouveaux workspaces") },
     Message { id: "accounts.menu.title", en: Text::plain("Claude account"), fr: Text::plain("Compte Claude") },
     Message { id: "accounts.pane.badgeTitle", en: Text::plain("This agent runs on the “{name}” account, not its workspace’s"), fr: Text::plain("Cet agent tourne sur le compte «\u{202f}{name}\u{202f}», pas celui de son workspace") },
     Message { id: "accounts.pane.menuHeading", en: Text::plain("Claude account for this pane"), fr: Text::plain("Compte Claude de ce volet") },
@@ -7088,6 +7102,7 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "create.gitStarting", en: Text::plain("Starting the clone…"), fr: Text::plain("Démarrage du clonage…") },
     Message { id: "create.gitStop", en: Text::plain("Cancel the clone"), fr: Text::plain("Annuler le clonage") },
     Message { id: "create.gitSubmit", en: Text::plain("Clone and create workspace"), fr: Text::plain("Cloner et créer le workspace") },
+    Message { id: "create.inFolder", en: Text::plain("In the {folder} folder"), fr: Text::plain("Dans le dossier {folder}") },
     Message { id: "create.layout", en: Text::plain("Arrangement"), fr: Text::plain("Disposition") },
     Message { id: "create.layoutHint", en: Text::plain("click a cell to change its agent"), fr: Text::plain("clique une case pour changer son agent") },
     Message { id: "create.less", en: Text::plain("One {agent} fewer"), fr: Text::plain("Un {agent} de moins") },
@@ -8472,6 +8487,7 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "sidebar.filterLabel", en: Text::plain("Filter workspaces and agents"), fr: Text::plain("Filtrer les workspaces et les agents") },
     Message { id: "sidebar.folderDefault", en: Text::plain("New folder"), fr: Text::plain("Nouveau dossier") },
     Message { id: "sidebar.folderEmpty", en: Text::plain("Drag a workspace here"), fr: Text::plain("Glisse un workspace ici") },
+    Message { id: "sidebar.folderNewWorkspace", en: Text::plain("New workspace in this folder"), fr: Text::plain("Nouveau workspace dans ce dossier") },
     Message { id: "sidebar.folderSize", en: Text::plural("{n} workspace", "{n} workspaces"), fr: Text::plural("{n} workspace", "{n} workspaces") },
     Message { id: "sidebar.goTo", en: Text::plain("Go to"), fr: Text::plain("Aller à") },
     Message { id: "sidebar.hide", en: Text::plain("Hide the navigator"), fr: Text::plain("Masquer le navigateur") },

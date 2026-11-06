@@ -138,6 +138,12 @@ pub enum Msg {
         pane: PaneId,
         id: Option<AccountId>,
     },
+    /// The account new workspaces of a navigator folder start on; `None`:
+    /// none, they follow the default.
+    SetFolder {
+        folder: String,
+        id: Option<AccountId>,
+    },
 
     // Settings › Accounts.
     RenameStart(AccountId),
@@ -202,6 +208,10 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         Msg::SetWorkspace { ws, id, restart } => set_workspace_account(m, &ws, id, restart),
         Msg::SetDefault { id, restart } => set_default_account(m, id, restart),
         Msg::SetPane { ws, pane, id } => set_pane_account(m, &ws, &pane, id),
+        Msg::SetFolder { folder, id } => {
+            set_folder_account(m, folder, id);
+            Task::none()
+        }
 
         page @ (Msg::RenameStart(_)
         | Msg::RenameInput(_)
@@ -568,6 +578,17 @@ fn set_default_account(m: &mut Model, id: AccountId, restart: bool) -> Task<Mess
     )
 }
 
+/// The account a folder's new workspaces start on. Nothing restarts: the
+/// choice is for the workspaces to come, and those already filed keep theirs.
+fn set_folder_account(m: &mut Model, folder: String, id: Option<AccountId>) {
+    m.apply(StoreAction::UpdateFolder(
+        folder,
+        Patch::new(move |folder: &mut crate::state::types::WorkspaceFolder| {
+            folder.claude_account = id.clone();
+        }),
+    ));
+}
+
 /// The person's pick in the pane's menu: a running agent restarts on it,
 /// conversation kept.
 fn set_pane_account(
@@ -609,6 +630,12 @@ pub fn badge<'a>(ctx: Ctx<'a>, ws: &'a WsId) -> Element<'a, Message> {
 /// The account entries of the navigator's and the pane's menus.
 pub fn menu_items<'a>(ctx: Ctx<'a>, ws: &'a WsId, pane: Option<&'a PaneId>) -> Vec<MenuEntry> {
     menu_items::menu_entries(ctx, ws, pane)
+}
+
+/// The account entries of a navigator folder's menu: the account the
+/// workspaces made in it, or moved into it, start on.
+pub fn folder_menu_items<'a>(ctx: Ctx<'a>, folder: &'a str) -> Vec<MenuEntry> {
+    menu_items::folder_entries(ctx, folder)
 }
 
 /// The workspace dialog's account picker. `value` is the account the

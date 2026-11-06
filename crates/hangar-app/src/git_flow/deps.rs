@@ -38,6 +38,8 @@ pub struct AppDeps {
     parent: Option<String>,
     /// The job the dialog follows and cancels.
     job_id: Option<String>,
+    /// The navigator folder the dialog was opened from.
+    folder: Option<String>,
 }
 
 impl AppDeps {
@@ -51,6 +53,7 @@ impl AppDeps {
             services: services.clone(),
             parent: None,
             job_id: None,
+            folder: None,
         }
     }
 
@@ -64,6 +67,13 @@ impl AppDeps {
     /// and the clone cancelled.
     pub fn job(mut self, job_id: impl Into<String>) -> AppDeps {
         self.job_id = Some(job_id.into());
+        self
+    }
+
+    /// The new workspace is filed in this navigator folder, and so starts on
+    /// the folder's account when it has one.
+    pub fn file_in(mut self, folder: Option<String>) -> AppDeps {
+        self.folder = folder;
         self
     }
 
@@ -157,7 +167,10 @@ impl FromGitDeps for AppDeps {
         }
     }
 
-    async fn create_workspace(&self, draft: NewWorkspace) -> Result<Created, String> {
+    async fn create_workspace(&self, mut draft: NewWorkspace) -> Result<Created, String> {
+        if draft.folder_id.is_none() {
+            draft.folder_id = self.folder.clone();
+        }
         self.ask(|answer| Msg::Create(draft, answer)).await
     }
 
@@ -224,6 +237,7 @@ pub(super) fn create_workspace(m: &mut Model, draft: NewWorkspace) -> Result<Cre
         layout: 1,
         agents: vec![AgentId::Claude],
         shell_id: None,
+        folder_id: draft.folder_id,
         ..WorkspaceDraft::default()
     }));
     let unmade = || "Hangar could not create the workspace.".to_string();

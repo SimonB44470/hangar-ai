@@ -208,6 +208,14 @@ pub fn folder_entries(ctx: Ctx<'_>, id: &str, filtering: bool) -> Vec<Entry<Mess
         entries.extend(agent_entries(ctx, &filed));
     }
     entries.push(
+        menu::item(tr.t(Key::SidebarFolderNewWorkspace).into_owned())
+            .icon(Icon::Plus)
+            .on_select(pick(Action::Intent(Intent::NewWorkspaceInFolder(
+                id.to_string(),
+            ))))
+            .into(),
+    );
+    entries.push(
         menu::item(tr.t(Key::SidebarMenuRename).into_owned())
             .icon(Icon::Pencil)
             .on_select(pick(Action::Rename {
@@ -215,6 +223,12 @@ pub fn folder_entries(ctx: Ctx<'_>, id: &str, filtering: bool) -> Vec<Entry<Mess
                 id: id.to_string(),
             }))
             .into(),
+    );
+    // The account its new workspaces start on.
+    entries.extend(
+        crate::accounts::folder_menu_items(ctx, id)
+            .into_iter()
+            .map(adopt),
     );
     entries.push(menu::separator());
     entries.push(

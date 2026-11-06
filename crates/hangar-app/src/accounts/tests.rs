@@ -1050,3 +1050,46 @@ fn usage_is_not_saved_before_the_file_was_read() {
     assert!(may_save(&mut st));
     assert!(!usage_arrived(&mut st, &mut h.model, Usage::default()));
 }
+
+// ── a navigator folder's account ──────────────────────────────────────
+
+#[test]
+fn a_folders_menu_offers_none_and_every_account_with_its_choice_checked() {
+    let h = Harness::new(Locale::En, "graphite").edit(|state| {
+        state.folders = vec![crate::state::types::WorkspaceFolder {
+            id: "games".into(),
+            name: "Games".into(),
+            claude_account: Some("perso".into()),
+            ..Default::default()
+        }];
+    });
+    let entries = folder_menu_items(h.ctx(), "games");
+    assert_eq!(
+        labels(&entries),
+        [
+            "---",
+            "# Account for its new workspaces",
+            "None (the default)",
+            "Principal",
+            "✓ Perso",
+            "Travail",
+        ]
+    );
+    assert!(folder_menu_items(h.ctx(), "gone").is_empty());
+}
+
+#[test]
+fn choosing_a_folders_account_keeps_it_and_restarts_nothing() {
+    let mut h = Harness::new(Locale::En, "graphite").edit(|state| {
+        state.folders = vec![crate::state::types::WorkspaceFolder {
+            id: "games".into(),
+            name: "Games".into(),
+            ..Default::default()
+        }];
+    });
+    set_folder_account(&mut h.model, "games".into(), Some("pro".into()));
+    assert_eq!(
+        h.model.state().folders[0].claude_account.as_deref(),
+        Some("pro")
+    );
+}

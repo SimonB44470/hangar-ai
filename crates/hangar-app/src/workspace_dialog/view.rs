@@ -247,7 +247,16 @@ pub fn dialog<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
             .on_press_maybe((!st.folder.cwd.is_empty()).then(|| submit_message(st, ctx))),
     };
 
-    let panel = dialog::dialog(t, ctx.t(Key::CreateTitle), form)
+    let mut panel = dialog::dialog(t, ctx.t(Key::CreateTitle), form);
+    // Opened from a navigator folder: the workspace is filed there.
+    if let Some(name) = st.target_folder(ctx.model) {
+        panel = panel.subtitle(
+            ctx.i18n
+                .t_with(Key::CreateInFolder, &args!("folder" => name))
+                .into_owned(),
+        );
+    }
+    let panel = panel
         .width(640.0)
         .body_max_height(BODY_HEIGHT)
         .body_padding(Padding::from([18.0, 22.0]))
