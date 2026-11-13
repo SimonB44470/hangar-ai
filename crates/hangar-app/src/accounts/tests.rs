@@ -103,16 +103,16 @@ fn the_list_has_a_row_per_account_with_its_figures_and_both_scopes() {
         t.t(hangar_i18n::Key::AccountsSwitcherWeek),
     );
     let reported = format!("{five} 40% · {week} 55%");
-    let unknown = format!("{five} unknown · {week} unknown");
     for text in [
         "This workspace uses",
         "Perso",
         "Travail",
-        " · not logged in",
+        "not logged in",
         "For every workspace",
-        // Figures of the account that reported, « unknown » for the others.
+        // Figures of the account that reported, one word for the one that
+        // has none yet.
         reported.as_str(),
-        unknown.as_str(),
+        "no figures yet",
     ] {
         assert!(ui.find(text).is_ok(), "{text} is in the menu");
     }
@@ -1134,4 +1134,59 @@ fn the_setting_switches_the_question_on_and_off() {
     assert!(h.model.settings().account_switch_ask);
     let _ = set_ask_switch(&mut h.model, false);
     assert!(!h.model.settings().account_switch_ask);
+}
+
+/// The figures of two accounts: Principal on both windows, Perso on its five
+/// hours only.
+fn reported(h: &mut Harness) {
+    h.model.live.accounts.usage = std::collections::BTreeMap::from([
+        (
+            "main".to_string(),
+            AccountUsage {
+                five_hour: window(37.0),
+                weekly: window(22.0),
+            },
+        ),
+        (
+            "perso".to_string(),
+            AccountUsage {
+                five_hour: window(93.0),
+                weekly: None,
+            },
+        ),
+    ]);
+}
+
+#[test]
+fn the_plan_block_has_a_line_per_account_once_several_have_reported() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    assert!(plan_block(h.ctx()).is_none(), "nothing reported yet");
+    reported(&mut h);
+    let block = plan_block(h.ctx()).expect("a block per account");
+    let mut ui = h.show(container(block).width(260));
+    for text in ["Plan", "Principal", "Perso", "37%", "22%", "93%"] {
+        assert!(ui.find(text).is_ok(), "{text} is in the block");
+    }
+    // Travail is not logged in and never reported: it is left out.
+    assert!(ui.find("Travail").is_err());
+    h.shot(&mut ui, "accounts-plan-en-graphite");
+
+    let mut h = Harness::new(Locale::Fr, "github-light");
+    reported(&mut h);
+    let block = plan_block(h.ctx()).expect("a block per account");
+    let mut ui = h.show(container(block).width(260));
+    assert!(ui.find("Forfait").is_ok());
+    h.shot(&mut ui, "accounts-plan-fr-github-light");
+}
+
+#[test]
+fn a_single_account_keeps_the_plain_plan_block() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    h.model.live.accounts.accounts = Some(vec![crate::workspace_dialog::testing::account(
+        "main",
+        "Principal",
+        true,
+    )]);
+    reported(&mut h);
+    assert!(plan_block(h.ctx()).is_none());
 }

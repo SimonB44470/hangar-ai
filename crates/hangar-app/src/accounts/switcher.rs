@@ -137,25 +137,39 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
         .into()
 }
 
+/// What is known of an account's limits, one window after the other, or a
+/// single word when nothing is: a window never reported is left out rather
+/// than called « unknown » twice over.
 fn usage_line(t: Translator, usage: Option<&AccountUsage>) -> String {
-    let show = |value: Option<u8>| match value {
-        None => t.t(Key::AccountsSwitcherUnknown).into_owned(),
-        Some(n) => t
-            .t_with(Key::AccountsSwitcherPercent, &args!("n" => n))
-            .into_owned(),
-    };
-    let five = t.t(Key::AccountsSwitcherFive);
-    let week = t.t(Key::AccountsSwitcherWeek);
-    t.t_with(
-        Key::AccountsSwitcherUsage,
-        &args!(
-            "five" => five.as_ref(),
-            "fiveValue" => show(usage_percent(usage.and_then(|u| u.five_hour.as_ref()))),
-            "week" => week.as_ref(),
-            "weekValue" => show(usage_percent(usage.and_then(|u| u.weekly.as_ref()))),
+    let windows = [
+        (
+            Key::AccountsSwitcherFive,
+            usage.and_then(|usage| usage.five_hour.as_ref()),
         ),
-    )
-    .into_owned()
+        (
+            Key::AccountsSwitcherWeek,
+            usage.and_then(|usage| usage.weekly.as_ref()),
+        ),
+    ];
+    let known: Vec<String> = windows
+        .into_iter()
+        .filter_map(|(name, window)| {
+            let n = usage_percent(window)?;
+            let value = t.t_with(Key::AccountsSwitcherPercent, &args!("n" => n));
+            Some(
+                t.t_with(
+                    Key::AccountsSwitcherWindow,
+                    &args!("window" => t.t(name).as_ref(), "value" => value.as_ref()),
+                )
+                .into_owned(),
+            )
+        })
+        .collect();
+    if known.is_empty() {
+        t.t(Key::AccountsSwitcherNoFigures).into_owned()
+    } else {
+        known.join(" · ")
+    }
 }
 
 /// The list: a heading and a row per account.
@@ -200,20 +214,24 @@ fn account_row<'a>(
     } else {
         Space::new().width(tokens::size::ICON).into()
     };
-    let mut name = row![text(account.label.as_str()).size(tokens::font_size::BODY)];
-    if !account.logged_in {
-        name = name.push(
-            text(format!(" · {}", ctx.t(Key::AccountsSwitcherNotLoggedIn)))
-                .size(tokens::font_size::BODY)
-                .style(style::text::muted(t)),
-        );
-    }
+    let name = text(account.label.as_str())
+        .size(tokens::font_size::BODY)
+        .wrapping(text::Wrapping::None);
+    // Not logged in says so on the second line, where the figures would be:
+    // the name keeps its line whatever the language.
+    let detail = if account.logged_in {
+        usage_line(ctx.i18n, usage)
+    } else {
+        ctx.t(Key::AccountsSwitcherNotLoggedIn).into_owned()
+    };
     let lines = column![
-        name,
-        text(usage_line(ctx.i18n, usage))
+        container(name).width(Length::Fill).clip(true),
+        text(detail)
             .size(tokens::font_size::LABEL)
             .style(style::text::muted(t)),
-    ];
+    ]
+    .spacing(tokens::space::XXS)
+    .width(Length::Fill);
     let main = button(
         row![mark, lines]
             .spacing(tokens::space::MD)

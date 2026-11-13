@@ -66,7 +66,7 @@ pub fn next_reset(limits: &[RateLimit], now: i64) -> Option<i64> {
 
 /// A reset as the end of a sentence, in the language of `tr`
 /// (`resetWhen`; the inspector says it the same way).
-fn reset_text(tr: Translator, at: i64, now: i64) -> String {
+pub fn reset_text(tr: Translator, at: i64, now: i64) -> String {
     reset_when(at, now, tr.locale()).text(tr)
 }
 
@@ -132,52 +132,12 @@ pub fn view<'a>(plan: Option<&'a PlanLimits>, ctx: Ctx<'a>) -> Option<Element<'a
 
     let mut meters = column![head].spacing(0);
     for limit in &plan.limits {
-        let pct = meter_pct(limit.percent_used);
-        let level = level_of(pct);
-        let ink = match level {
-            Level::Ok => t.colors.fg_muted,
-            Level::Warn => t.colors.warning,
-            Level::Hot => t.colors.danger,
-        };
-        let track = t.colors.line_strong;
-        let bar = progress_bar(0.0..=100.0, f32::from(pct))
-            .girth(4)
-            .length(Length::Fill)
-            .style(move |_: &iced::Theme| progress_bar::Style {
-                background: Background::Color(track),
-                bar: Background::Color(ink),
-                border: Border {
-                    radius: 2.0.into(),
-                    ..Border::default()
-                },
-            });
-        meters = meters.push(
-            row![
-                container(
-                    text(window_label(tr, &limit.kind))
-                        .size(font_size::CAPTION)
-                        .color(t.colors.fg_muted)
-                        .wrapping(text::Wrapping::None)
-                )
-                .width(24),
-                container(bar).width(Length::Fill).center_y(Length::Fill),
-                container(
-                    text(format_percent(f64::from(pct), locale))
-                        .size(font_size::LABEL)
-                        .font(fonts::mono())
-                        .color(if level == Level::Ok {
-                            t.colors.fg_muted
-                        } else {
-                            ink
-                        })
-                )
-                .width(34)
-                .align_x(Alignment::End),
-            ]
-            .spacing(space::MD)
-            .align_y(Alignment::Center)
-            .height(16),
-        );
+        meters = meters.push(meter(
+            t,
+            locale,
+            window_label(tr, &limit.kind),
+            meter_pct(limit.percent_used),
+        ));
     }
 
     let block = container(meters).width(Length::Fill).padding(Padding {
@@ -202,7 +162,57 @@ pub fn view<'a>(plan: Option<&'a PlanLimits>, ctx: Ctx<'a>) -> Option<Element<'a
     )
 }
 
-fn rule<'a>(t: &'a Theme) -> Element<'a, Message> {
+/// One window's line: its name, a bar, and the percent, amber then red as it
+/// nears the limit. The per-account block draws the same lines.
+pub fn meter<'a>(t: &'a Theme, locale: Locale, label: String, pct: u8) -> Element<'a, Message> {
+    let level = level_of(pct);
+    let ink = match level {
+        Level::Ok => t.colors.fg_muted,
+        Level::Warn => t.colors.warning,
+        Level::Hot => t.colors.danger,
+    };
+    let track = t.colors.line_strong;
+    let bar = progress_bar(0.0..=100.0, f32::from(pct))
+        .girth(4)
+        .length(Length::Fill)
+        .style(move |_: &iced::Theme| progress_bar::Style {
+            background: Background::Color(track),
+            bar: Background::Color(ink),
+            border: Border {
+                radius: 2.0.into(),
+                ..Border::default()
+            },
+        });
+    row![
+        container(
+            text(label)
+                .size(font_size::CAPTION)
+                .color(t.colors.fg_muted)
+                .wrapping(text::Wrapping::None)
+        )
+        .width(24),
+        container(bar).width(Length::Fill).center_y(Length::Fill),
+        container(
+            text(format_percent(f64::from(pct), locale))
+                .size(font_size::LABEL)
+                .font(fonts::mono())
+                .color(if level == Level::Ok {
+                    t.colors.fg_muted
+                } else {
+                    ink
+                })
+        )
+        .width(34)
+        .align_x(Alignment::End),
+    ]
+    .spacing(space::MD)
+    .align_y(Alignment::Center)
+    .height(16)
+    .into()
+}
+
+/// The hairline over the block.
+pub fn rule<'a>(t: &'a Theme) -> Element<'a, Message> {
     container(Space::new())
         .width(Length::Fill)
         .height(1)

@@ -206,7 +206,10 @@ pub fn sidebar<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
     if let Some(foot) = machines_foot(ctx) {
         body = body.push(foot);
     }
-    if let Some(block) = plan::view(reads::plan(model), ctx) {
+    // A line per account when there are several, else the last session's.
+    if let Some(block) =
+        crate::accounts::plan_block(ctx).or_else(|| plan::view(reads::plan(model), ctx))
+    {
         body = body.push(block);
     }
     body = body.push(filter_bar(&frame, &machine));

@@ -7,8 +7,8 @@
 //! accounts panes were launched on), `switch` (restart sets, usage, labels),
 //! `usage` (the usage cache on disk), `menu_items` (the lines of the
 //! navigator's and the pane's menus), `switcher` (the toolbar button),
-//! `badge`, `picker` (the workspace dialog's select) and `settings_page`
-//! (Settings › Accounts).
+//! `badge`, `plan` (the plan block with a line per account), `picker` (the
+//! workspace dialog's select) and `settings_page` (Settings › Accounts).
 //!
 //! # What other packages call
 //!
@@ -24,6 +24,7 @@
 mod badge;
 mod menu_items;
 mod picker;
+mod plan;
 mod settings_page;
 mod switch;
 mod switcher;
@@ -632,6 +633,12 @@ fn set_pane_account(
 /// The toolbar's account switcher (embedded by the toolbar).
 pub fn switcher<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
     switcher::view(st, ctx)
+}
+
+/// The navigator's plan block with a line per account, when there are
+/// several and some have reported; `None` leaves the plain block.
+pub fn plan_block<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
+    plan::view(ctx)
 }
 
 /// A pane header's account badge.

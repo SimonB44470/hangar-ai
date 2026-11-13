@@ -120,6 +120,8 @@ pub enum Key {
     AccountsSwitcherMenu,
     /// `accounts.switcher.nextLaunch`
     AccountsSwitcherNextLaunch,
+    /// `accounts.switcher.noFigures`
+    AccountsSwitcherNoFigures,
     /// `accounts.switcher.notLoggedIn`
     AccountsSwitcherNotLoggedIn,
     /// `accounts.switcher.percent`
@@ -130,10 +132,6 @@ pub enum Key {
     AccountsSwitcherRestartHere,
     /// `accounts.switcher.running`
     AccountsSwitcherRunning,
-    /// `accounts.switcher.unknown`
-    AccountsSwitcherUnknown,
-    /// `accounts.switcher.usage`
-    AccountsSwitcherUsage,
     /// `accounts.switcher.useEverywhere`
     AccountsSwitcherUseEverywhere,
     /// `accounts.switcher.useEverywhereLabel`
@@ -142,6 +140,8 @@ pub enum Key {
     AccountsSwitcherUseHere,
     /// `accounts.switcher.week`
     AccountsSwitcherWeek,
+    /// `accounts.switcher.window`
+    AccountsSwitcherWindow,
     /// `activity.appStarted`
     ActivityAppStarted,
     /// `activity.appStopped`
@@ -3686,10 +3686,14 @@ pub enum Key {
     SidebarNoneWaiting,
     /// `sidebar.plan`
     SidebarPlan,
+    /// `sidebar.planAccountsHint`
+    SidebarPlanAccountsHint,
     /// `sidebar.planFiveHour`
     SidebarPlanFiveHour,
     /// `sidebar.planHint`
     SidebarPlanHint,
+    /// `sidebar.planNoFigures`
+    SidebarPlanNoFigures,
     /// `sidebar.planResetDate`
     SidebarPlanResetDate,
     /// `sidebar.planResetDay`
@@ -4457,7 +4461,7 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2220;
+pub const KEY_COUNT: usize = 2222;
 
 impl Key {
     /// Every key, in the order of their ids.
@@ -4515,17 +4519,17 @@ impl Key {
         Key::AccountsSwitcherHeading,
         Key::AccountsSwitcherMenu,
         Key::AccountsSwitcherNextLaunch,
+        Key::AccountsSwitcherNoFigures,
         Key::AccountsSwitcherNotLoggedIn,
         Key::AccountsSwitcherPercent,
         Key::AccountsSwitcherRestartEverywhere,
         Key::AccountsSwitcherRestartHere,
         Key::AccountsSwitcherRunning,
-        Key::AccountsSwitcherUnknown,
-        Key::AccountsSwitcherUsage,
         Key::AccountsSwitcherUseEverywhere,
         Key::AccountsSwitcherUseEverywhereLabel,
         Key::AccountsSwitcherUseHere,
         Key::AccountsSwitcherWeek,
+        Key::AccountsSwitcherWindow,
         Key::ActivityAppStarted,
         Key::ActivityAppStopped,
         Key::ActivityAsleep,
@@ -6298,8 +6302,10 @@ impl Key {
         Key::SidebarNoMatch,
         Key::SidebarNoneWaiting,
         Key::SidebarPlan,
+        Key::SidebarPlanAccountsHint,
         Key::SidebarPlanFiveHour,
         Key::SidebarPlanHint,
+        Key::SidebarPlanNoFigures,
         Key::SidebarPlanResetDate,
         Key::SidebarPlanResetDay,
         Key::SidebarPlanResetToday,
@@ -6740,17 +6746,17 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.switcher.heading", en: Text::plain("This workspace uses"), fr: Text::plain("Ce workspace utilise") },
     Message { id: "accounts.switcher.menu", en: Text::plain("Claude accounts"), fr: Text::plain("Comptes Claude") },
     Message { id: "accounts.switcher.nextLaunch", en: Text::plain("On next launch"), fr: Text::plain("Au prochain lancement") },
+    Message { id: "accounts.switcher.noFigures", en: Text::plain("no figures yet"), fr: Text::plain("pas encore de relevé") },
     Message { id: "accounts.switcher.notLoggedIn", en: Text::plain("not logged in"), fr: Text::plain("non connecté") },
     Message { id: "accounts.switcher.percent", en: Text::plain("{n}%"), fr: Text::plain("{n}\u{202f}%") },
     Message { id: "accounts.switcher.restartEverywhere", en: Text::plain("Restart the agents that follow the default now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents qui suivent le défaut (conversations conservées)") },
     Message { id: "accounts.switcher.restartHere", en: Text::plain("Restart this workspace’s agents now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents de ce workspace (conversations conservées)") },
     Message { id: "accounts.switcher.running", en: Text::plural("{n} agent running.", "{n} agents running."), fr: Text::plural("{n} agent en cours.", "{n} agents en cours.") },
-    Message { id: "accounts.switcher.unknown", en: Text::plain("unknown"), fr: Text::plain("inconnu") },
-    Message { id: "accounts.switcher.usage", en: Text::plain("{five} {fiveValue} · {week} {weekValue}"), fr: Text::plain("{five} {fiveValue} · {week} {weekValue}") },
     Message { id: "accounts.switcher.useEverywhere", en: Text::plain("For every workspace"), fr: Text::plain("Pour tous les workspaces") },
     Message { id: "accounts.switcher.useEverywhereLabel", en: Text::plain("Make {name} the default for every workspace"), fr: Text::plain("Faire de {name} le compte par défaut de tous les workspaces") },
     Message { id: "accounts.switcher.useHere", en: Text::plain("Use {name} in this workspace"), fr: Text::plain("Utiliser {name} dans ce workspace") },
     Message { id: "accounts.switcher.week", en: Text::plain("week"), fr: Text::plain("semaine") },
+    Message { id: "accounts.switcher.window", en: Text::plain("{window} {value}"), fr: Text::plain("{window} {value}") },
     Message { id: "activity.appStarted", en: Text::plain("Hangar started"), fr: Text::plain("Hangar a démarré") },
     Message { id: "activity.appStopped", en: Text::plain("Hangar stopped"), fr: Text::plain("Hangar s'est arrêté") },
     Message { id: "activity.asleep", en: Text::plain("{name} fell asleep"), fr: Text::plain("{name}\u{a0}s'est endormi") },
@@ -8523,8 +8529,10 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "sidebar.noMatch", en: Text::plain("Nothing matches “{query}”."), fr: Text::plain("Rien ne correspond à «\u{202f}{query}\u{202f}».") },
     Message { id: "sidebar.noneWaiting", en: Text::plain("No agent is waiting for you."), fr: Text::plain("Aucun agent ne t'attend.") },
     Message { id: "sidebar.plan", en: Text::plain("Plan"), fr: Text::plain("Forfait") },
+    Message { id: "sidebar.planAccountsHint", en: Text::plain("Plan usage of each Claude account, as its panes last reported it"), fr: Text::plain("Consommation du forfait de chaque compte Claude, d'après le dernier relevé de ses volets") },
     Message { id: "sidebar.planFiveHour", en: Text::plain("5\u{a0}h"), fr: Text::plain("5\u{a0}h") },
     Message { id: "sidebar.planHint", en: Text::plain("Plan usage, as Claude Code last reported it"), fr: Text::plain("Consommation du forfait, d'après le dernier relevé de Claude Code") },
+    Message { id: "sidebar.planNoFigures", en: Text::plain("No figures yet"), fr: Text::plain("Pas encore de relevé") },
     Message { id: "sidebar.planResetDate", en: Text::plain("resets {date} at {time}"), fr: Text::plain("remise à zéro le {date} à {time}") },
     Message { id: "sidebar.planResetDay", en: Text::plain("resets {day} at {time}"), fr: Text::plain("remise à zéro {day} à {time}") },
     Message { id: "sidebar.planResetToday", en: Text::plain("resets at {time}"), fr: Text::plain("remise à zéro à {time}") },
