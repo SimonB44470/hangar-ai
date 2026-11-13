@@ -100,6 +100,13 @@ pub struct PaneRt {
     pub launched_role: Option<PaneRole>,
     /// The restart a role asked for was dealt with, once per pin.
     pub role_handled: bool,
+    /// The account a move was started for (`accounts::follow`), so that a
+    /// launch core had to put on another account is not restarted again.
+    pub moved_to: Option<String>,
+    /// When the person last typed in it between two turns: what they typed
+    /// is in Claude Code's prompt, and a restart would lose it. Cleared by
+    /// the next turn, which means it was sent.
+    pub drafted_at: Option<Instant>,
     /// The spawn, while the terminal has not measured itself yet or the
     /// machine's shells are not known yet.
     pending: Option<Spawn>,
@@ -485,6 +492,8 @@ pub fn mount(
         mcp: None,
         launched_role: pane.role,
         role_handled: false,
+        moved_to: None,
+        drafted_at: None,
         pending: Some(spawn),
         start_due: false,
         resume: None,
@@ -1440,6 +1449,90 @@ pub fn role_check(rt: &mut PaneRt, m: &Model, locale: Locale) -> Task<Message> {
 }
 
 /// The session the restart for a role was to resume exists, or not.
+/// How long what the person typed and did not send holds a move back: past
+/// it, the draft reads as given up (a prompt cleared with Ctrl+C, a window
+/// left with a word typed). Nothing is lost when it is still there: Claude
+/// Code keeps no draft across a restart, but the person is told the pane
+/// waits, and it moves only once they stop typing for that long.
+const DRAFT_HOLD: Duration = Duration::from_secs(90);
+
+/// Whether the person typed in the pane since its last turn, recently enough
+/// to count as a draft still being written.
+pub fn drafting(rt: &PaneRt, now: Instant) -> bool {
+    rt.drafted_at
+        .is_some_and(|at| now.saturating_duration_since(at) < DRAFT_HOLD)
+}
+
+/// Moves a running Claude Code to the account it should now run on, by
+/// itself, when the person does not want to be asked
+/// (`Settings::account_switch_ask` off): at once between two turns, after
+/// the turn or the draft otherwise, on the same conversation. Returns the
+/// verdict with the account it is about, for the header, and the restart
+/// when it is due.
+pub fn account_follow(
+    rt: &mut PaneRt,
+    m: &Model,
+    now: Instant,
+) -> (crate::accounts::Follow, String, Task<Message>) {
+    use crate::accounts::{Follow, FollowInput, follow, resolve_account};
+    let stay = (Follow::Stay, String::new(), Task::none());
+    if m.settings().account_switch_ask {
+        return stay;
+    }
+    let id = rt.link.id.clone();
+    let Some((ws, pane)) = find(m, &rt.ws, &id) else {
+        return stay;
+    };
+    let Some(accounts) = m.live.accounts.accounts.as_deref() else {
+        return stay;
+    };
+    let mid_turn = m.live.panes_logic.is_mid_turn(&id);
+    // A turn begun means what was typed was sent.
+    if mid_turn {
+        rt.drafted_at = None;
+    }
+    let wanted = resolve_account(
+        accounts,
+        m.settings().claude_account.as_deref(),
+        ws.claude_account.as_deref(),
+        pane.claude_account.as_deref(),
+    );
+    let wanted_logged_in = accounts
+        .iter()
+        .find(|account| account.id == wanted.id)
+        .map(|account| account.logged_in);
+    let verdict = follow(&FollowInput {
+        movable: rt.agent == AgentId::Claude
+            && !rt.hosted
+            && pane.login != Some(true)
+            && rt.status == PaneStatus::Running,
+        launched: rt.account.as_deref(),
+        wanted: &wanted.id,
+        wanted_logged_in,
+        tried: rt.moved_to.as_deref(),
+        mid_turn,
+        drafting: drafting(rt, now),
+    });
+    if verdict != Follow::Now {
+        return (verdict, wanted.id, Task::none());
+    }
+    rt.moved_to = Some(wanted.id.clone());
+    if let Some(session) = pane.session_id.as_deref() {
+        let tr = Translator::new(m.locale());
+        let name = crate::accounts::account_label(accounts, &wanted.id);
+        queue_restart_note(
+            session,
+            &tr.t_with(Key::AccountsMovedNote, &args!("name" => name.as_str())),
+        );
+    }
+    // The respawn keeps the conversation and resolves the account again.
+    let task = Task::done(Message::Intent(Intent::RestartPanes {
+        ws: ws.id.clone(),
+        panes: vec![id],
+    }));
+    (verdict, wanted.id, task)
+}
+
 pub fn role_restart_answered(
     rt: &PaneRt,
     ws: WsId,
@@ -1487,6 +1580,8 @@ pub(crate) fn mounted(ws: &Workspace, pane: &Pane) -> PaneRt {
         mcp: None,
         launched_role: pane.role,
         role_handled: false,
+        moved_to: None,
+        drafted_at: None,
         pending: None,
         start_due: false,
         resume: None,
@@ -1518,6 +1613,79 @@ mod tests {
             .build()
             .expect("runtime")
             .block_on(future)
+    }
+
+    /// A Claude Code agent moves to the account its workspace now uses by
+    /// itself: after its turn, after what the person is typing, at once in
+    /// between, once per account, and never toward an account that is not
+    /// logged in, nor when the person asked to be asked.
+    #[test]
+    fn an_agent_follows_its_account_between_turns_and_never_over_a_draft() {
+        use crate::accounts::Follow;
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+
+        let mut h = Harness::new(Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        let now = Instant::now();
+
+        // In a turn, or waiting on the person: after it.
+        for busy in [AgentActivity::Working, AgentActivity::Waiting] {
+            h.model.live.panes_logic.seed_activity("p1", "w1", busy);
+            let (verdict, to, task) = account_follow(&mut rt, &h.model, now);
+            assert_eq!(
+                (verdict, to.as_str(), task.units()),
+                (Follow::AfterTurn, "perso", 0)
+            );
+        }
+        // The turn is over, but the person typed a prompt not sent yet.
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        rt.drafted_at = Some(now);
+        let (verdict, _, task) = account_follow(&mut rt, &h.model, now);
+        assert_eq!((verdict, task.units()), (Follow::AfterDraft, 0));
+        // A draft left for long reads as given up: the agent moves.
+        let later = now + DRAFT_HOLD + Duration::from_secs(1);
+        let (verdict, _, task) = account_follow(&mut rt, &h.model, later);
+        assert_eq!((verdict, task.units()), (Follow::Now, 1));
+        assert_eq!(rt.moved_to.as_deref(), Some("perso"));
+        // Started for perso: not again, even if core had to fall back.
+        let (verdict, _, task) = account_follow(&mut rt, &h.model, later);
+        assert_eq!((verdict, task.units()), (Follow::Stay, 0));
+
+        // An account not logged in: the pane stays, and says why.
+        let mut h = h.edit(|state| state.workspaces[0].claude_account = Some("pro".into()));
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        let (verdict, to, task) = account_follow(&mut rt, &h.model, later);
+        assert_eq!(
+            (verdict, to.as_str(), task.units()),
+            (Follow::NotLoggedIn, "pro", 0)
+        );
+
+        // Asked to be asked: nothing moves by itself.
+        h = h.edit(|state| {
+            state.workspaces[0].claude_account = Some("perso".into());
+            state.settings.account_switch_ask = true;
+        });
+        let (verdict, _, task) = account_follow(&mut rt, &h.model, later);
+        assert_eq!((verdict, task.units()), (Follow::Stay, 0));
+
+        // A shell has no account to follow.
+        let h = Harness::new(Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        let mut shell = mounted(&ws, &ws.panes[1]);
+        shell.status = PaneStatus::Running;
+        shell.account = Some("main".into());
+        let (verdict, _, _) = account_follow(&mut shell, &h.model, later);
+        assert_eq!(verdict, Follow::Stay);
     }
 
     /// A terminal nothing will measure (the chat view's) starts wide and tall

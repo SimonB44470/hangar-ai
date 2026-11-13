@@ -50,6 +50,7 @@ pub use model::{
     AccountId, AccountSource, ClaudeAccount, LOGIN_COMMAND, Launched, MAIN_ACCOUNT,
     ResolvedAccount, launch_account, launch_account_with, read_account_choice, resolve_account,
 };
+pub use switch::{Follow, FollowInput, follow};
 use switch::{
     SwitchPane, SwitchWorkspace, Usage, UsageMeasure, merge_usage,
     panes_to_restart_on_default_change, panes_to_restart_on_workspace_change, running_count,
@@ -97,6 +98,17 @@ pub struct Live {
     pub usage: Usage,
     /// The account each running Claude Code pane was launched on (P5 keeps it).
     pub launched: Launched,
+    /// The panes waiting to move to another account, and to which: their
+    /// header says so until they do (P5 keeps it, `switch::follow`).
+    pub moving: std::collections::HashMap<PaneId, Moving>,
+}
+
+/// A pane's move to another account, as its header shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moving {
+    pub to: AccountId,
+    /// `to` is not logged in: the pane stays where it is until it is.
+    pub blocked: bool,
 }
 
 /// The package's messages, routed by the shell as `Message::Accounts(Msg)`.
@@ -122,6 +134,9 @@ pub enum Msg {
     Decide(bool),
     /// Back from the question to the list.
     Back,
+    /// Settings › Accounts: ask before moving running agents, or let them
+    /// move by themselves between two turns.
+    AskSwitch(bool),
 
     // Choosing an account for something, from a menu or a picker.
     SetWorkspace {
@@ -155,6 +170,12 @@ pub enum Msg {
     Added(Result<AccountId, String>),
     Renamed(Result<(), String>),
     Removed(AccountId, Result<(), String>),
+}
+
+/// An account's label for a line written outside the views (a pane's note):
+/// its id when it is not listed.
+pub fn account_label(accounts: &[ClaudeAccount], id: &str) -> String {
+    switch::account_name(accounts, Some(id), id)
 }
 
 fn live<'a>(ctx: Ctx<'a>) -> &'a Live {
@@ -199,6 +220,7 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         | Msg::Decide(_)
         | Msg::Back) => switcher_step(st, m, menu),
 
+        Msg::AskSwitch(on) => set_ask_switch(m, on),
         Msg::SetWorkspace { ws, id, restart } => set_workspace_account(m, &ws, id, restart),
         Msg::SetDefault { id, restart } => set_default_account(m, id, restart),
         Msg::SetPane { ws, pane, id } => set_pane_account(m, &ws, &pane, id),
@@ -220,6 +242,13 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
     }
 }
 
+fn set_ask_switch(m: &mut Model, on: bool) -> Task<Message> {
+    m.apply(StoreAction::UpdateSettings(Patch::new(
+        move |settings: &mut Settings| settings.account_switch_ask = on,
+    )));
+    Task::none()
+}
+
 /// The switcher's popover: the list, and the question asked before a switch
 /// that restarts running agents. It needs no service, only the model.
 fn switcher_step(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
@@ -236,7 +265,12 @@ fn switcher_step(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Choose { ws, id, scope } => {
-            let running = running_in(m, &ws, scope);
+            // Unasked, the panes follow on their own, each between two turns.
+            let running = if m.settings().account_switch_ask {
+                running_in(m, &ws, scope)
+            } else {
+                0
+            };
             if running == 0 {
                 st.switcher = switcher::Menu::Closed;
                 return apply_switch(m, &ws, id, scope, false);
@@ -508,7 +542,8 @@ fn apply_switch(
 }
 
 /// The agents restart with their conversation: a respawn with no patch keeps
-/// the session. Always the person's call.
+/// the session. Asked of the person when `account_switch_ask` is on; when it
+/// is off, the panes move by themselves instead (`follow`).
 fn restart_task(ws: &WsId, panes: Vec<PaneId>) -> Task<Message> {
     if panes.is_empty() {
         return Task::none();
@@ -569,14 +604,17 @@ fn set_default_account(m: &mut Model, id: AccountId, restart: bool) -> Task<Mess
 }
 
 /// The person's pick in the pane's menu: a running agent restarts on it,
-/// conversation kept.
+/// conversation kept — at once when they asked to be asked
+/// (`account_switch_ask`), otherwise between two of its turns (`follow`,
+/// run by the panes).
 fn set_pane_account(
     m: &mut Model,
     ws: &WsId,
     pane: &PaneId,
     id: Option<AccountId>,
 ) -> Task<Message> {
-    let running = m.live.accounts.launched.is_running(pane);
+    // Unasked, the pane moves on its own once its turn ends.
+    let running = m.settings().account_switch_ask && m.live.accounts.launched.is_running(pane);
     m.apply(StoreAction::UpdatePane {
         ws: ws.clone(),
         pane: pane.clone(),

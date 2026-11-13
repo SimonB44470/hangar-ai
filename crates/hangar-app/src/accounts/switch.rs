@@ -207,6 +207,78 @@ pub fn merge_usage(known: &Usage, fresh: &Usage) -> Usage {
     result
 }
 
+/// What a running Claude Code pane should do about its account, when the
+/// person does not want to be asked (`Settings::account_switch_ask` off).
+///
+/// Claude Code reads its login once, as it starts (`CLAUDE_CONFIG_DIR`), so a
+/// pane moves to another account by restarting on the same conversation —
+/// which every account finds, `projects/` being shared (core's
+/// accounts.rs). Doing it between two turns, and never over what the person
+/// is typing, makes that restart the only trace of the switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Follow {
+    /// Nothing to do: on its account already, or not a pane an account moves.
+    Stay,
+    /// Restart now on `FollowInput::wanted`.
+    Now,
+    /// Later: its agent is inside a turn (at work, or waiting on the person).
+    AfterTurn,
+    /// Later: the person typed in it since its last turn and has not sent it.
+    AfterDraft,
+    /// Not at all: the account it should move to is not logged in, so a
+    /// restart would only land it back where it is.
+    NotLoggedIn,
+}
+
+impl Follow {
+    /// The pane is to move, now or later: its header says so.
+    pub fn pending(self) -> bool {
+        matches!(self, Follow::AfterTurn | Follow::AfterDraft)
+    }
+}
+
+/// What `follow` reads of a pane, all of it known without a service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FollowInput<'a> {
+    /// A Claude Code pane, run by this computer (not by a node), not opened
+    /// to log in.
+    pub movable: bool,
+    /// The account its Claude Code was started on; `None` when none runs.
+    pub launched: Option<&'a str>,
+    /// The account it should run on now (pane > workspace > default).
+    pub wanted: &'a str,
+    /// Whether `wanted` is logged in; `None` while the list is not known.
+    pub wanted_logged_in: Option<bool>,
+    /// The account a move was already started for: core can fall back to
+    /// another account at launch, and a pane must not restart over and over
+    /// toward one it cannot run on.
+    pub tried: Option<&'a str>,
+    pub mid_turn: bool,
+    /// Typed in since its last turn, recently.
+    pub drafting: bool,
+}
+
+pub fn follow(input: &FollowInput<'_>) -> Follow {
+    let Some(launched) = input.launched else {
+        return Follow::Stay;
+    };
+    if !input.movable || launched == input.wanted || input.tried == Some(input.wanted) {
+        return Follow::Stay;
+    }
+    match input.wanted_logged_in {
+        None => return Follow::Stay,
+        Some(false) => return Follow::NotLoggedIn,
+        Some(true) => {}
+    }
+    if input.mid_turn {
+        Follow::AfterTurn
+    } else if input.drafting {
+        Follow::AfterDraft
+    } else {
+        Follow::Now
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -496,5 +568,85 @@ mod tests {
         );
         let back: Usage = serde_json::from_str(&text).expect("reads back");
         assert_eq!(back, usage);
+    }
+
+    fn input<'a>(launched: Option<&'a str>, wanted: &'a str) -> FollowInput<'a> {
+        FollowInput {
+            movable: true,
+            launched,
+            wanted,
+            wanted_logged_in: Some(true),
+            tried: None,
+            mid_turn: false,
+            drafting: false,
+        }
+    }
+
+    #[test]
+    fn a_pane_between_turns_moves_at_once() {
+        assert_eq!(follow(&input(Some("main"), "perso")), Follow::Now);
+    }
+
+    #[test]
+    fn a_pane_on_its_account_or_not_running_stays() {
+        assert_eq!(follow(&input(Some("perso"), "perso")), Follow::Stay);
+        assert_eq!(follow(&input(None, "perso")), Follow::Stay);
+        let shell = FollowInput {
+            movable: false,
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&shell), Follow::Stay);
+    }
+
+    #[test]
+    fn a_pane_inside_a_turn_waits_for_its_end() {
+        let busy = FollowInput {
+            mid_turn: true,
+            drafting: true,
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&busy), Follow::AfterTurn);
+        assert!(follow(&busy).pending());
+    }
+
+    #[test]
+    fn a_draft_is_never_lost() {
+        let typing = FollowInput {
+            drafting: true,
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&typing), Follow::AfterDraft);
+        assert!(follow(&typing).pending());
+    }
+
+    #[test]
+    fn an_account_not_logged_in_or_unknown_moves_nothing() {
+        let out = FollowInput {
+            wanted_logged_in: Some(false),
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&out), Follow::NotLoggedIn);
+        assert!(!follow(&out).pending());
+        let unknown = FollowInput {
+            wanted_logged_in: None,
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&unknown), Follow::Stay);
+    }
+
+    #[test]
+    fn a_move_already_tried_is_not_tried_again() {
+        // Core started the pane on main although perso was asked: no loop.
+        let tried = FollowInput {
+            tried: Some("perso"),
+            ..input(Some("main"), "perso")
+        };
+        assert_eq!(follow(&tried), Follow::Stay);
+        // Two switches in a row: only the last account counts.
+        let again = FollowInput {
+            tried: Some("perso"),
+            ..input(Some("main"), "pro")
+        };
+        assert_eq!(follow(&again), Follow::Now);
     }
 }

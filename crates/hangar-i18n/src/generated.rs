@@ -18,6 +18,16 @@ pub enum Key {
     AccountsBadgeTitle,
     /// `accounts.menu.title`
     AccountsMenuTitle,
+    /// `accounts.movedNote`
+    AccountsMovedNote,
+    /// `accounts.moving`
+    AccountsMoving,
+    /// `accounts.movingBlocked`
+    AccountsMovingBlocked,
+    /// `accounts.movingBlockedTitle`
+    AccountsMovingBlockedTitle,
+    /// `accounts.movingTitle`
+    AccountsMovingTitle,
     /// `accounts.pane.badgeTitle`
     AccountsPaneBadgeTitle,
     /// `accounts.pane.menuHeading`
@@ -40,6 +50,10 @@ pub enum Key {
     AccountsSettingsAddPlaceholder,
     /// `accounts.settings.addTitle`
     AccountsSettingsAddTitle,
+    /// `accounts.settings.askSwitch`
+    AccountsSettingsAskSwitch,
+    /// `accounts.settings.askSwitchHint`
+    AccountsSettingsAskSwitchHint,
     /// `accounts.settings.cancel`
     AccountsSettingsCancel,
     /// `accounts.settings.default`
@@ -4443,13 +4457,18 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2213;
+pub const KEY_COUNT: usize = 2220;
 
 impl Key {
     /// Every key, in the order of their ids.
     pub const ALL: [Key; KEY_COUNT] = [
         Key::AccountsBadgeTitle,
         Key::AccountsMenuTitle,
+        Key::AccountsMovedNote,
+        Key::AccountsMoving,
+        Key::AccountsMovingBlocked,
+        Key::AccountsMovingBlockedTitle,
+        Key::AccountsMovingTitle,
         Key::AccountsPaneBadgeTitle,
         Key::AccountsPaneMenuHeading,
         Key::AccountsPickerDefault,
@@ -4461,6 +4480,8 @@ impl Key {
         Key::AccountsSettingsAddName,
         Key::AccountsSettingsAddPlaceholder,
         Key::AccountsSettingsAddTitle,
+        Key::AccountsSettingsAskSwitch,
+        Key::AccountsSettingsAskSwitchHint,
         Key::AccountsSettingsCancel,
         Key::AccountsSettingsDefault,
         Key::AccountsSettingsFailed,
@@ -6668,6 +6689,11 @@ impl Key {
 pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.badge.title", en: Text::plain("Claude account: {name}"), fr: Text::plain("Compte Claude\u{202f}: {name}") },
     Message { id: "accounts.menu.title", en: Text::plain("Claude account"), fr: Text::plain("Compte Claude") },
+    Message { id: "accounts.movedNote", en: Text::plain("Now on {name}, same conversation."), fr: Text::plain("Maintenant sur {name}, même conversation.") },
+    Message { id: "accounts.moving", en: Text::plain("→ {name}"), fr: Text::plain("→ {name}") },
+    Message { id: "accounts.movingBlocked", en: Text::plain("{name}: not logged in"), fr: Text::plain("{name}\u{202f}: non connecté") },
+    Message { id: "accounts.movingBlockedTitle", en: Text::plain("{name} is not logged in, so this pane stays on its account: log it in from Settings › Accounts"), fr: Text::plain("{name} n’est pas connecté, ce panneau reste donc sur son compte\u{202f}: connecte-le depuis Réglages › Comptes") },
+    Message { id: "accounts.movingTitle", en: Text::plain("Moves to {name} once its turn and what you are typing in it are over, on the same conversation"), fr: Text::plain("Passe sur {name} une fois son tour fini et ce que tu y tapes envoyé, sur la même conversation") },
     Message { id: "accounts.pane.badgeTitle", en: Text::plain("This agent runs on the “{name}” account, not its workspace’s"), fr: Text::plain("Cet agent tourne sur le compte «\u{202f}{name}\u{202f}», pas celui de son workspace") },
     Message { id: "accounts.pane.menuHeading", en: Text::plain("Claude account for this pane"), fr: Text::plain("Compte Claude de ce volet") },
     Message { id: "accounts.picker.default", en: Text::plain("Default ({name})"), fr: Text::plain("Par défaut ({name})") },
@@ -6679,6 +6705,8 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.settings.addName", en: Text::plain("Name"), fr: Text::plain("Nom") },
     Message { id: "accounts.settings.addPlaceholder", en: Text::plain("Work, Personal…"), fr: Text::plain("Travail, Perso…") },
     Message { id: "accounts.settings.addTitle", en: Text::plain("Add an account"), fr: Text::plain("Ajouter un compte") },
+    Message { id: "accounts.settings.askSwitch", en: Text::plain("Ask before moving running agents"), fr: Text::plain("Demander avant de déplacer les agents en cours") },
+    Message { id: "accounts.settings.askSwitchHint", en: Text::plain("Off, an agent moves to its new account by itself between two of its turns, on the same conversation, and never while you are typing in it."), fr: Text::plain("Désactivé, un agent passe tout seul sur son nouveau compte entre deux de ses tours, sur la même conversation, et jamais pendant que tu y tapes.") },
     Message { id: "accounts.settings.cancel", en: Text::plain("Cancel"), fr: Text::plain("Annuler") },
     Message { id: "accounts.settings.default", en: Text::plain("Default"), fr: Text::plain("Par défaut") },
     Message { id: "accounts.settings.failed", en: Text::plain("Could not do that: {detail}"), fr: Text::plain("Impossible\u{202f}: {detail}") },

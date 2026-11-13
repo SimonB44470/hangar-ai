@@ -47,6 +47,41 @@ fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, M
     tip::over(ctx.theme, label, title)
 }
 
+/// « → Perso »: the pane moves to that account once its turn (or what the
+/// person is typing in it) is over; in the danger colour when it cannot,
+/// that account not being logged in.
+fn moving_chip<'a>(
+    ctx: Ctx<'a>,
+    accounts: &[ClaudeAccount],
+    moving: &super::Moving,
+) -> Element<'a, Message> {
+    let unknown = ctx.t(Key::AccountsPickerUnknown);
+    let name = account_name(accounts, Some(&moving.to), &unknown);
+    let (words, why) = if moving.blocked {
+        (Key::AccountsMovingBlocked, Key::AccountsMovingBlockedTitle)
+    } else {
+        (Key::AccountsMoving, Key::AccountsMovingTitle)
+    };
+    let label = ctx
+        .i18n
+        .t_with(words, &args!("name" => name.as_str()))
+        .into_owned();
+    let title = ctx
+        .i18n
+        .t_with(why, &args!("name" => name.as_str()))
+        .into_owned();
+    let words = text(label)
+        .size(tokens::font_size::MICRO)
+        .wrapping(Wrapping::None);
+    let words = if moving.blocked {
+        words.style(style::text::danger(ctx.theme))
+    } else {
+        words.style(style::text::secondary(ctx.theme))
+    };
+    let chip = container(words).max_width(MAX_WIDTH);
+    tip::over(ctx.theme, chip, title)
+}
+
 /// A navigator row's badge: only a workspace on an account other than the
 /// default is worth a label.
 pub fn workspace<'a>(ctx: Ctx<'a>, ws: &'a WsId) -> Element<'a, Message> {
@@ -85,6 +120,10 @@ pub fn pane<'a>(ctx: Ctx<'a>, ws: &'a WsId, pane: &'a PaneId) -> Element<'a, Mes
     };
     if pane.agent != AgentId::Claude {
         return nothing();
+    }
+    // On its way to another account, or held back from it.
+    if let Some(moving) = live(ctx).moving.get(&pane.id) {
+        return moving_chip(ctx, accounts, moving);
     }
     let default = ctx.model.settings().claude_account.as_deref();
     let own = resolve_account(

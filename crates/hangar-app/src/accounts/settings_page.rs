@@ -417,6 +417,22 @@ pub fn view<'a>(page: &'a Page, ctx: Ctx<'a>) -> Element<'a, Message> {
         .collect();
     body = body.push(form::group(t, rows));
     body = body.push(add_form(page, ctx, accounts));
+    // Only worth a word once there is another account to move to.
+    if accounts.len() > 1 {
+        let ask = ctx.model.settings().account_switch_ask;
+        body = body.push(form::group(
+            t,
+            vec![
+                form::row(
+                    t,
+                    ctx.t(Key::AccountsSettingsAskSwitch),
+                    input::switch(t, ask).on_toggle(|on| Message::Accounts(Msg::AskSwitch(on))),
+                )
+                .hint(ctx.t(Key::AccountsSettingsAskSwitchHint))
+                .into(),
+            ],
+        ));
+    }
 
     form::section(t, ctx.t(Key::AccountsSettingsTitle))
         .hint(ctx.t(Key::AccountsSettingsIntro))

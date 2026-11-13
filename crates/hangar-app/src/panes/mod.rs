@@ -621,6 +621,11 @@ fn term_action(
             // program: you taking it back, or answering what it waited on.
             // On screen, it is using the workspace too.
             TermEvent::UserInput => {
+                // Between two turns, a key is a draft a restart would lose
+                // (`controller::account_follow`); in a turn, an answer.
+                if !m.live.panes_logic.is_mid_turn(&pane) {
+                    rt.drafted_at = Some(std::time::Instant::now());
+                }
                 tasks.push(logic(Logic::Key { pane: pane.clone() }));
                 if m.workspace(&rt.ws).is_some_and(|ws| visible(m, ws, &pane)) {
                     tasks.push(logic(Logic::Typed {
@@ -1320,6 +1325,15 @@ fn signature(st: &State, m: &Model) -> u64 {
     )
         .hash(&mut hash);
     std::mem::discriminant(&s.cursor_style).hash(&mut hash);
+    // A move to another account waits on the choices, the logins and each
+    // agent's turn (`controller::account_follow`).
+    let follows = !s.account_switch_ask;
+    if follows {
+        s.claude_account.hash(&mut hash);
+        for account in m.live.accounts.accounts.iter().flatten() {
+            (&account.id, account.logged_in).hash(&mut hash);
+        }
+    }
     for id in &m.ui.opened_ids {
         let Some(ws) = m.find_workspace(id) else {
             continue;
@@ -1329,8 +1343,15 @@ fn signature(st: &State, m: &Model) -> u64 {
         crate::nodes::hosted::unfollowed(m, ws).hash(&mut hash);
         crate::chat_view::shown(m, ws).hash(&mut hash);
         ws.view_panes.len().hash(&mut hash);
+        if follows {
+            ws.claude_account.hash(&mut hash);
+        }
         for pane in &ws.panes {
             pane.id.hash(&mut hash);
+            if follows && pane.agent == crate::state::AgentId::Claude {
+                pane.claude_account.hash(&mut hash);
+                m.live.panes_logic.is_mid_turn(&pane.id).hash(&mut hash);
+            }
             if pane.role.is_some() {
                 pane.role.hash(&mut hash);
                 pane.session_id.hash(&mut hash);
@@ -1340,6 +1361,19 @@ fn signature(st: &State, m: &Model) -> u64 {
         }
         focused_pane(m, ws).hash(&mut hash);
         m.ui.zoom_by_workspace.get(&ws.id).hash(&mut hash);
+    }
+    if follows {
+        // The account each runs on, and a draft that holds a move back until
+        // it is old enough to read as given up: looked at again every few
+        // seconds while one is recent.
+        unordered(st.panes.iter().map(|(id, rt)| (id, &rt.account))).hash(&mut hash);
+        let now = std::time::Instant::now();
+        if st.panes.values().any(|rt| controller::drafting(rt, now)) {
+            (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs() / 5))
+            .hash(&mut hash);
+        }
     }
     unordered(
         st.panes
@@ -1478,6 +1512,8 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
     }
 
     let locale = m.locale();
+    let now = std::time::Instant::now();
+    let mut moving = std::collections::HashMap::new();
     for (id, rt) in st.panes.iter_mut() {
         let Some(ws) = m.workspace(&rt.ws) else {
             continue;
@@ -1504,7 +1540,20 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
             }
         }
         tasks.push(controller::role_check(rt, m, locale));
+        let (follow, to, moved) = controller::account_follow(rt, m, now);
+        if follow.pending() || follow == crate::accounts::Follow::NotLoggedIn {
+            moving.insert(
+                id.clone(),
+                crate::accounts::Moving {
+                    to,
+                    blocked: !follow.pending(),
+                },
+            );
+        }
+        tasks.push(moved);
     }
+    // What the pane headers say about a move to come.
+    m.live.accounts.moving = moving;
     // A window that appeared is asked what scale it is at; those that went
     // are forgotten.
     st.scales.retain(|id, _| m.live.windows.contains_key(id));

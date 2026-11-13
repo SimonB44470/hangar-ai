@@ -234,9 +234,14 @@ fn with_nothing_running_a_click_switches_at_once_and_closes() {
     assert_eq!(task.units(), 0);
 }
 
+/// The person who asked to be asked (`account_switch_ask`).
+fn asking() -> Harness {
+    Harness::new(Locale::En, "graphite").edit(|state| state.settings.account_switch_ask = true)
+}
+
 #[test]
 fn with_agents_running_a_click_asks_and_the_answer_decides_the_restart() {
-    let mut h = Harness::new(Locale::En, "graphite");
+    let mut h = asking();
     h.model.live.accounts.launched.note("p1", Some("main"));
     let mut st = State::default();
     st.switcher = Menu::Open;
@@ -336,7 +341,7 @@ fn a_new_default_restarts_the_agents_of_the_workspaces_that_follow_it() {
 
 #[test]
 fn a_pane_pick_restarts_the_agent_only_when_it_runs() {
-    let mut h = Harness::new(Locale::En, "graphite");
+    let mut h = asking();
     assert_eq!(
         set_pane_account(
             &mut h.model,
@@ -512,6 +517,35 @@ fn a_pane_on_another_account_than_its_workspace_wears_its_label() {
     assert!(ui.find("Principal").is_err());
 }
 
+#[test]
+fn a_pane_on_its_way_to_another_account_says_so_in_its_header() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    let (w, p) = (ws("w1"), "p1".to_string());
+    h.model.live.accounts.moving.insert(
+        p.clone(),
+        Moving {
+            to: "perso".into(),
+            blocked: false,
+        },
+    );
+    {
+        let mut ui = h.show(pane_badge(h.ctx(), &w, &p));
+        assert!(ui.find("→ Perso").is_ok());
+        h.shot(&mut ui, "accounts-pane-moving-en-graphite");
+    }
+    // Toward an account not logged in: it stays, and says why.
+    h.model.live.accounts.moving.insert(
+        p.clone(),
+        Moving {
+            to: "pro".into(),
+            blocked: true,
+        },
+    );
+    let mut ui = h.show(pane_badge(h.ctx(), &w, &p));
+    assert!(ui.find("Travail: not logged in").is_ok());
+    h.shot(&mut ui, "accounts-pane-moving-blocked-en-graphite");
+}
+
 fn labels(entries: &[MenuEntry]) -> Vec<String> {
     entries
         .iter()
@@ -646,6 +680,7 @@ fn the_page_lists_every_account_with_who_uses_it_and_what_can_be_done() {
         "Add an account",
         "Add and log in",
         "A pane opens so you can log in through your browser.",
+        "Ask before moving running agents",
     ] {
         assert!(ui.find(text).is_ok(), "{text} is on the page");
     }
@@ -1049,4 +1084,54 @@ fn usage_is_not_saved_before_the_file_was_read() {
     assert!(usage_arrived(&mut st, &mut h.model, Usage::default()));
     assert!(may_save(&mut st));
     assert!(!usage_arrived(&mut st, &mut h.model, Usage::default()));
+}
+
+#[test]
+fn unasked_a_click_switches_at_once_and_leaves_the_restart_to_the_panes() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    h.model.live.accounts.launched.note("p1", Some("main"));
+    let mut st = State::default();
+    st.switcher = Menu::Open;
+    let task = switcher_step(
+        &mut st,
+        &mut h.model,
+        choose(SwitchScope::Workspace, "perso"),
+    );
+    // No question, no restart from here: the pane moves between two turns.
+    assert_eq!(st.switcher, Menu::Closed);
+    assert_eq!(task.units(), 0);
+    assert_eq!(
+        h.model
+            .workspace(&ws("w1"))
+            .unwrap()
+            .claude_account
+            .as_deref(),
+        Some("perso")
+    );
+}
+
+#[test]
+fn unasked_a_pane_pick_restarts_nothing_from_the_menu() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    h.model.live.accounts.launched.note("p1", Some("main"));
+    assert_eq!(
+        set_pane_account(
+            &mut h.model,
+            &ws("w1"),
+            &"p1".to_string(),
+            Some("pro".into())
+        )
+        .units(),
+        0
+    );
+}
+
+#[test]
+fn the_setting_switches_the_question_on_and_off() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    assert!(!h.model.settings().account_switch_ask);
+    let _ = set_ask_switch(&mut h.model, true);
+    assert!(h.model.settings().account_switch_ask);
+    let _ = set_ask_switch(&mut h.model, false);
+    assert!(!h.model.settings().account_switch_ask);
 }
