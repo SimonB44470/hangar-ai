@@ -16,8 +16,6 @@
 //!   settings), and a malformed one is read leniently (`lenient.rs`), since a
 //!   strict parse error would quarantine the person's workspaces.
 
-use std::collections::BTreeMap;
-
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
@@ -603,21 +601,21 @@ pub struct Settings {
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub account_badges: bool,
     /// How each Claude account is marked where its badge shows, by account
-    /// id (`accountStyles`). Written only when one has a style, so a file
-    /// from before stays as it was.
-    #[serde(
-        skip_serializing_if = "BTreeMap::is_empty",
-        deserialize_with = "account_styles"
-    )]
-    pub account_styles: BTreeMap<String, AccountStyle>,
+    /// id (`accountStyles`): `{"perso": {"tone": "success", "icon":
+    /// "gamepad"}}`. Kept as written, as `keybindings` is, and read through
+    /// `account_style`: a tone or a key a newer version added, or an entry
+    /// this one cannot read, stays in the file for the version that can.
+    /// Written only when an account has a style, so a file from before stays
+    /// as it was.
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub account_styles: Map<String, Value>,
     #[serde(flatten)]
     pub extra: Extra,
 }
 
 /// The colours an account's badge can take: the theme's own tones, so a badge
 /// reads on every theme, light or dark, as the other badges of Hangar do.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AccountTone {
     Accent,
     Success,
@@ -633,57 +631,31 @@ impl AccountTone {
         AccountTone::Warning,
         AccountTone::Danger,
     ];
-}
 
-/// What the person chose for an account's badge: a tone, an icon (a name of
-/// Hangar's icon set), or neither. Keys this version does not know are kept.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", default)]
-pub struct AccountStyle {
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "tone_or_none"
-    )]
-    pub tone: Option<AccountTone>,
-    #[serde(
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "text_or_none"
-    )]
-    pub icon: Option<String>,
-    #[serde(flatten)]
-    pub extra: Extra,
-}
+    /// The name `accountStyles` stores it under.
+    pub const fn name(self) -> &'static str {
+        match self {
+            AccountTone::Accent => "accent",
+            AccountTone::Success => "success",
+            AccountTone::Warning => "warning",
+            AccountTone::Danger => "danger",
+        }
+    }
 
-impl AccountStyle {
-    /// Nothing chosen and nothing kept: the entry can go.
-    pub fn is_empty(&self) -> bool {
-        self.tone.is_none() && self.icon.is_none() && self.extra.is_empty()
+    /// The tone stored under `name`; one this version does not know is none.
+    pub fn from_name(name: &str) -> Option<AccountTone> {
+        AccountTone::ALL
+            .into_iter()
+            .find(|tone| tone.name() == name)
     }
 }
 
-/// A tone this version does not know reads as none, rather than costing the
-/// account its icon.
-fn tone_or_none<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<Option<AccountTone>, D::Error> {
-    Ok(serde_json::from_value(Value::deserialize(deserializer)?).ok())
-}
-
-/// The styles by account; an entry that is not an object costs only itself.
-fn account_styles<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<BTreeMap<String, AccountStyle>, D::Error> {
-    let Value::Object(entries) = Value::deserialize(deserializer)? else {
-        return Ok(BTreeMap::new());
-    };
-    Ok(entries
-        .into_iter()
-        .filter_map(|(id, style)| {
-            serde_json::from_value::<AccountStyle>(style)
-                .ok()
-                .map(|style| (id, style))
-        })
-        .collect())
+/// What this version reads of an account's entry in `accountStyles`: a tone,
+/// an icon (by its name in Hangar's icon set), or neither.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountStyle {
+    pub tone: Option<AccountTone>,
+    pub icon: Option<String>,
 }
 
 /// A machine reached over SSH that runs `hangar-node` (docs/native/nodes.md
@@ -812,7 +784,7 @@ impl Default for Settings {
             projects_folder: None,
             nodes: Vec::new(),
             account_badges: false,
-            account_styles: BTreeMap::new(),
+            account_styles: Map::new(),
             extra: Map::new(),
         }
     }
@@ -828,6 +800,56 @@ impl Settings {
             100.0
         };
         (percent / 100.0) as f32
+    }
+
+    /// The style chosen for account `id`. A tone this version does not know,
+    /// a value that is not text, or an entry that is not an object reads as
+    /// nothing chosen: the badge is plain, and the file keeps what it holds.
+    pub fn account_style(&self, id: &str) -> AccountStyle {
+        let entry = self.account_styles.get(id);
+        let text = |key: &str| entry.and_then(|entry| entry.get(key)?.as_str());
+        AccountStyle {
+            tone: text("tone").and_then(AccountTone::from_name),
+            icon: text("icon").map(str::to_owned),
+        }
+    }
+
+    /// Sets the tone of account `id`'s badge, or with `None` takes it off.
+    pub fn set_account_tone(&mut self, id: &str, tone: Option<AccountTone>) {
+        self.restyle_account(id, "tone", tone.map(|tone| tone.name().into()));
+    }
+
+    /// Sets the icon of account `id`'s badge by its name, or with `None`
+    /// takes it off.
+    pub fn set_account_icon(&mut self, id: &str, icon: Option<&str>) {
+        self.restyle_account(id, "icon", icon.map(Value::from));
+    }
+
+    /// Writes `key` of account `id`'s entry, keeping the keys this version
+    /// does not know. An entry that is not an object is replaced (the person
+    /// chose anew), and one left empty is taken out of the file.
+    fn restyle_account(&mut self, id: &str, key: &str, value: Option<Value>) {
+        let entry = self
+            .account_styles
+            .entry(id)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(Map::new());
+        }
+        let Value::Object(fields) = entry else {
+            return;
+        };
+        match value {
+            Some(value) => {
+                fields.insert(key.to_string(), value);
+            }
+            None => {
+                fields.remove(key);
+            }
+        }
+        if fields.is_empty() {
+            self.account_styles.remove(id);
+        }
     }
 }
 
