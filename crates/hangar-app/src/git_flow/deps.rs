@@ -332,20 +332,25 @@ mod tests {
     use hangar_engine::accounts::ClaudeAccount;
 
     use super::*;
+    use crate::state::Settings;
     use crate::state::types::WorkspaceFolder;
 
     /// A model with a folder « games » on `account`, and « pro » for default.
     fn model_with_games(account: Option<&str>) -> Model {
         let mut m = Model::default();
-        let mut state = AppState::default();
-        state.folders = vec![WorkspaceFolder {
-            id: "games".into(),
-            name: "Games".into(),
-            claude_account: account.map(str::to_string),
-            ..WorkspaceFolder::default()
-        }];
-        state.settings.claude_account = Some("pro".into());
-        m.hydrate(state);
+        m.hydrate(AppState {
+            folders: vec![WorkspaceFolder {
+                id: "games".into(),
+                name: "Games".into(),
+                claude_account: account.map(str::to_string),
+                ..WorkspaceFolder::default()
+            }],
+            settings: Settings {
+                claude_account: Some("pro".into()),
+                ..Settings::default()
+            },
+            ..AppState::default()
+        });
         m
     }
 
