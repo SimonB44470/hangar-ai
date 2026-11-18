@@ -1021,7 +1021,7 @@ fn an_agent_that_ended_is_not_asked_about_or_restarted() {
     assert_eq!(running_in(&h.model, &ws("w1"), SwitchScope::Default), 0);
     let workspace = h.model.workspace(&ws("w1")).expect("w1 exists");
     assert!(
-        switch_workspace(workspace, &h.model.live.accounts)
+        switch_workspace(&h.model, workspace)
             .panes
             .iter()
             .all(|pane| !pane.running)
