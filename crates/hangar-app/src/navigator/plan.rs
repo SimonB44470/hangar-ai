@@ -33,6 +33,16 @@ pub fn meter_pct(percent_used: f64) -> u8 {
     percent_used.round().clamp(0.0, 100.0) as u8
 }
 
+/// The percent a window's meter shows at `now`: none once its reset has
+/// passed, the plan having started the window over since the figure was
+/// reported.
+pub fn shown_pct(limit: &RateLimit, now: i64) -> u8 {
+    match resets_at_ms(limit) {
+        Some(reset) if reset <= now => 0,
+        _ => meter_pct(limit.percent_used),
+    }
+}
+
 pub fn level_of(pct: u8) -> Level {
     if pct >= HOT_AT {
         Level::Hot
@@ -136,7 +146,7 @@ pub fn view<'a>(plan: Option<&'a PlanLimits>, ctx: Ctx<'a>) -> Option<Element<'a
             t,
             locale,
             window_label(tr, &limit.kind),
-            meter_pct(limit.percent_used),
+            shown_pct(limit, now),
         ));
     }
 

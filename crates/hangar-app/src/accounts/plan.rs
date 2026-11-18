@@ -9,9 +9,9 @@
 //! reset. With a single account it stays as it was.
 //!
 //! A window whose reset has passed since it was reported counts as empty: the
-//! plan started that window over, and the figure on file is from before.
+//! plan started that window over, and the figure on file is from before
+//! (`navigator::plan::shown_pct`, which the plain block follows too).
 
-use chrono::DateTime;
 use iced::widget::{Space, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Length, Padding};
 
@@ -21,38 +21,36 @@ use hangar_theme::{fonts, style};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
-use crate::navigator::plan::{meter, meter_pct, reset_text, rule, window_label};
+use crate::navigator::plan::{meter, next_reset, reset_text, rule, shown_pct, window_label};
 use crate::panes_logic::wall_clock_ms;
+use crate::state::live::RateLimit;
 
 use super::live;
 use super::model::ClaudeAccount;
-use super::switch::{AccountUsage, WindowUsage};
+use super::switch::{AccountUsage, FIVE_HOUR, WEEKLY};
 
-/// A reset as epoch milliseconds, when the figure says one.
-fn reset_ms(window: &WindowUsage) -> Option<i64> {
-    let at = window.resets_at.as_deref()?;
-    DateTime::parse_from_rfc3339(at)
-        .ok()
-        .map(|parsed| parsed.timestamp_millis())
-}
-
-/// The percent a window's meter shows at `now`: none once its reset has
-/// passed.
-pub fn shown_pct(window: &WindowUsage, now: i64) -> u8 {
-    match reset_ms(window) {
-        Some(reset) if reset <= now => 0,
-        _ => meter_pct(window.percent_used),
-    }
-}
-
-/// The account's soonest reset still to come.
-pub fn next_reset(usage: &AccountUsage, now: i64) -> Option<i64> {
-    [usage.five_hour.as_ref(), usage.weekly.as_ref()]
-        .into_iter()
-        .flatten()
-        .filter_map(reset_ms)
-        .filter(|at| *at > now)
-        .min()
+/// An account's windows as the plain block reads a session's: the plan's
+/// two, then a gateway's, by kind. The same functions then draw them and
+/// find their resets.
+pub fn limits(usage: &AccountUsage) -> Vec<RateLimit> {
+    let plan = [
+        (FIVE_HOUR, usage.five_hour.as_ref()),
+        (WEEKLY, usage.weekly.as_ref()),
+    ];
+    plan.into_iter()
+        .filter_map(|(kind, window)| Some((kind, window?)))
+        .chain(
+            usage
+                .others
+                .iter()
+                .map(|(kind, window)| (kind.as_str(), window)),
+        )
+        .map(|(kind, window)| RateLimit {
+            kind: kind.to_owned(),
+            percent_used: window.percent_used,
+            resets_at: window.resets_at.clone(),
+        })
+        .collect()
 }
 
 /// The accounts the block lists: every one with figures, and the logged-in
@@ -91,6 +89,7 @@ pub fn view<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
     .spacing(space::XS);
 
     for (account, figures) in listed {
+        let windows = figures.map(limits).unwrap_or_default();
         let mut head = row![
             container(
                 text(account.label.clone())
@@ -104,7 +103,7 @@ pub fn view<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
         ]
         .spacing(space::MD)
         .align_y(Alignment::Center);
-        if let Some(next) = figures.and_then(|figures| next_reset(figures, now)) {
+        if let Some(next) = next_reset(&windows, now) {
             head = head.push(
                 text(reset_text(tr, next, now))
                     .size(font_size::CAPTION)
@@ -113,28 +112,15 @@ pub fn view<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
             );
         }
         let mut entry = column![head].spacing(0);
-        let windows = [
-            (
-                "five_hour",
-                figures.and_then(|figures| figures.five_hour.as_ref()),
-            ),
-            (
-                "seven_day",
-                figures.and_then(|figures| figures.weekly.as_ref()),
-            ),
-        ];
-        let mut any = false;
-        for (kind, window) in windows {
-            let Some(window) = window else { continue };
-            any = true;
+        for limit in &windows {
             entry = entry.push(meter(
                 t,
                 locale,
-                window_label(tr, kind),
-                shown_pct(window, now),
+                window_label(tr, &limit.kind),
+                shown_pct(limit, now),
             ));
         }
-        if !any {
+        if windows.is_empty() {
             entry = entry.push(
                 text(tr.t(Key::SidebarPlanNoFigures).into_owned())
                     .size(font_size::CAPTION)
@@ -170,6 +156,7 @@ pub fn view<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::switch::{Usage, WindowUsage};
     use super::*;
 
     fn account(id: &str, logged_in: bool) -> ClaudeAccount {
@@ -191,40 +178,27 @@ mod tests {
         })
     }
 
-    const RESET: &str = "2026-11-06T18:00:00Z";
-
-    fn reset() -> i64 {
-        DateTime::parse_from_rfc3339(RESET)
-            .unwrap()
-            .timestamp_millis()
+    fn five_hours(percent_used: f64) -> AccountUsage {
+        AccountUsage {
+            five_hour: window(percent_used, None),
+            ..AccountUsage::default()
+        }
     }
 
     #[test]
     fn a_single_account_or_no_figures_leaves_the_plain_block() {
-        let usage = super::super::switch::Usage::from([(
-            "main".to_string(),
-            AccountUsage {
-                five_hour: window(10.0, None),
-                weekly: None,
-            },
-        )]);
+        let usage = Usage::from([("main".to_string(), five_hours(10.0))]);
         assert!(shown(&[account("main", true)], &usage).is_none());
         let both = [account("main", true), account("perso", true)];
-        assert!(shown(&both, &super::super::switch::Usage::new()).is_none());
+        assert!(shown(&both, &Usage::new()).is_none());
         assert!(shown(&both, &usage).is_some());
     }
 
     #[test]
     fn an_account_with_figures_or_logged_in_is_listed_and_the_others_are_not() {
-        let usage = super::super::switch::Usage::from([
+        let usage = Usage::from([
             ("gone".to_string(), AccountUsage::default()),
-            (
-                "pro".to_string(),
-                AccountUsage {
-                    five_hour: window(5.0, None),
-                    weekly: None,
-                },
-            ),
+            ("pro".to_string(), five_hours(5.0)),
         ]);
         let all = [
             account("main", true),
@@ -239,29 +213,66 @@ mod tests {
         assert_eq!(ids, [("main", false), ("pro", true)]);
     }
 
+    /// A window whose reset passed since it was reported shows empty, in the
+    /// per-account block as in the plain one (`shown_pct`).
     #[test]
     fn a_window_past_its_reset_is_shown_empty() {
-        let window = window(87.0, Some(RESET)).unwrap();
-        assert_eq!(shown_pct(&window, reset() - 1), 87);
-        assert_eq!(shown_pct(&window, reset()), 0);
-        let undated = WindowUsage {
-            resets_at: None,
-            ..window
+        let reset = chrono::DateTime::parse_from_rfc3339("2026-11-06T18:00:00Z")
+            .expect("a date")
+            .timestamp_millis();
+        let usage = AccountUsage {
+            weekly: window(87.0, Some("2026-11-06T18:00:00Z")),
+            others: [(
+                "monthly".to_string(),
+                WindowUsage {
+                    percent_used: 87.0,
+                    resets_at: None,
+                    at: 1,
+                },
+            )]
+            .into(),
+            ..AccountUsage::default()
         };
-        assert_eq!(shown_pct(&undated, i64::MAX), 87);
+        let windows = limits(&usage);
+        assert_eq!(shown_pct(&windows[0], reset - 1), 87);
+        assert_eq!(shown_pct(&windows[0], reset), 0);
+        // Without a reset, the figure stands.
+        assert_eq!(shown_pct(&windows[1], i64::MAX), 87);
     }
 
+    /// An account's windows read as a session's report: the plan's two in
+    /// their order, then a gateway's, which the plain block showed too; the
+    /// soonest reset is found among all of them.
     #[test]
-    fn the_next_reset_is_the_soonest_still_to_come() {
+    fn an_accounts_windows_are_the_plans_two_then_a_gateways() {
         let usage = AccountUsage {
-            five_hour: window(1.0, Some("2026-11-06T12:00:00Z")),
-            weekly: window(1.0, Some(RESET)),
+            five_hour: window(10.0, Some("2026-11-06T12:00:00Z")),
+            weekly: window(20.0, None),
+            others: [(
+                "monthly".to_string(),
+                window(30.0, Some("2026-11-06T09:00:00Z")).expect("a window"),
+            )]
+            .into(),
         };
-        let noon = DateTime::parse_from_rfc3339("2026-11-06T12:00:00Z")
-            .unwrap()
-            .timestamp_millis();
-        assert_eq!(next_reset(&usage, noon - 1), Some(noon));
-        assert_eq!(next_reset(&usage, noon), Some(reset()));
-        assert_eq!(next_reset(&usage, reset()), None);
+        let windows = limits(&usage);
+        let kinds: Vec<_> = windows
+            .iter()
+            .map(|limit| (limit.kind.as_str(), limit.percent_used))
+            .collect();
+        assert_eq!(
+            kinds,
+            [("five_hour", 10.0), ("seven_day", 20.0), ("monthly", 30.0)]
+        );
+        let at = |iso: &str| {
+            chrono::DateTime::parse_from_rfc3339(iso)
+                .expect("a date")
+                .timestamp_millis()
+        };
+        let nine = at("2026-11-06T09:00:00Z");
+        assert_eq!(next_reset(&windows, nine - 1), Some(nine));
+        assert_eq!(next_reset(&windows, nine), Some(at("2026-11-06T12:00:00Z")));
+        // Nothing reported: no window, no reset.
+        assert!(limits(&AccountUsage::default()).is_empty());
+        assert_eq!(limits(&five_hours(5.0)).len(), 1);
     }
 }

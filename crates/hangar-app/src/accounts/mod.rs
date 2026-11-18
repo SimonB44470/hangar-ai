@@ -51,7 +51,7 @@ pub use model::{
     AccountId, AccountSource, ClaudeAccount, LOGIN_COMMAND, Launched, MAIN_ACCOUNT,
     ResolvedAccount, launch_account, launch_account_with, read_account_choice, resolve_account,
 };
-pub use switch::{Follow, FollowInput, follow};
+pub use switch::{Follow, FollowInput, Job, Turn, follow};
 use switch::{
     SwitchPane, SwitchWorkspace, Usage, UsageMeasure, merge_usage,
     panes_to_restart_on_default_change, panes_to_restart_on_workspace_change, running_count,
@@ -135,8 +135,8 @@ pub enum Msg {
     Decide(bool),
     /// Back from the question to the list.
     Back,
-    /// Settings › Accounts: ask before moving running agents, or let them
-    /// move by themselves between two turns.
+    /// Settings › Accounts: ask before moving running agents, or let each
+    /// move by itself once it has nothing to lose (`follow`).
     AskSwitch(bool),
 
     // Choosing an account for something, from a menu or a picker.
@@ -266,7 +266,8 @@ fn switcher_step(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Choose { ws, id, scope } => {
-            // Unasked, the panes follow on their own, each between two turns.
+            // Unasked, each pane follows on its own, once it has nothing to
+            // lose (`follow`, run by the panes).
             let running = if m.settings().account_switch_ask {
                 running_in(m, &ws, scope)
             } else {
@@ -606,7 +607,7 @@ fn set_default_account(m: &mut Model, id: AccountId, restart: bool) -> Task<Mess
 
 /// The person's pick in the pane's menu: a running agent restarts on it,
 /// conversation kept — at once when they asked to be asked
-/// (`account_switch_ask`), otherwise between two of its turns (`follow`,
+/// (`account_switch_ask`), otherwise once it has nothing to lose (`follow`,
 /// run by the panes).
 fn set_pane_account(
     m: &mut Model,
@@ -614,7 +615,7 @@ fn set_pane_account(
     pane: &PaneId,
     id: Option<AccountId>,
 ) -> Task<Message> {
-    // Unasked, the pane moves on its own once its turn ends.
+    // Unasked, the pane moves on its own once it has nothing to lose.
     let running = m.settings().account_switch_ask && m.live.accounts.launched.is_running(pane);
     m.apply(StoreAction::UpdatePane {
         ws: ws.clone(),

@@ -138,6 +138,7 @@ mod tests {
             AccountUsage {
                 five_hour: window(12.0, 5),
                 weekly: window(30.5, 6),
+                ..AccountUsage::default()
             },
         )]);
         save(&file, &usage).expect("saves");
@@ -162,6 +163,7 @@ mod tests {
             AccountUsage {
                 five_hour: window(1.0, 1),
                 weekly: None,
+                ..AccountUsage::default()
             },
         )]);
         save(&file, &usage).expect("replaces");

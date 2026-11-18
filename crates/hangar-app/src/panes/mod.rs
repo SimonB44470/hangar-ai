@@ -115,7 +115,23 @@ pub struct State {
     waves: waves::Waves,
     /// When the next look at the waves is due, while one is on its way.
     wave_look: Option<Instant>,
+    /// The moves to another account whose restart is on its way, by the id
+    /// of the pane restarted, then of the pane the restart made until it
+    /// is mounted (`carry_move`).
+    moves: HashMap<PaneId, Carry>,
 }
+
+/// A pane's move to another account, handed to the pane its restart makes.
+#[derive(Debug, Clone)]
+struct Carry {
+    /// The account the move was started for.
+    to: String,
+    at: Instant,
+}
+
+/// How long a move waits for the pane its restart makes: a pane closed
+/// before its restart went through leaves it behind.
+const CARRY_KEEP: Duration = Duration::from_secs(60);
 
 /// The pickers of a header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -214,6 +230,12 @@ pub enum Msg {
     WaveLook,
     /// Whether the session a role's restart resumes exists.
     RoleRestart(WsId, PaneId, String, bool),
+    /// The look set for this instant at a pane waiting to move to another
+    /// account (`controller::FollowStep::Wake`).
+    FollowWake(PaneId, Instant),
+    /// What runs below a pane waiting to move to another account, as the
+    /// process table answered (`controller::FollowStep::Ask`).
+    JobChecked(PaneId, crate::accounts::Job),
     FlushDrops,
     Paste(PaneId, Option<String>),
     /// A press in a pane.
@@ -387,9 +409,28 @@ fn handle(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Messag
             Some(rt) => controller::role_restart_answered(rt, ws, session, found, m.locale()),
             None => Task::none(),
         },
+        Msg::FollowWake(pane, at) => {
+            let Some(rt) = st.panes.get_mut(&pane) else {
+                return Task::none();
+            };
+            controller::woke(rt, at);
+            let now = Instant::now();
+            let look = controller::account_follow(rt, m, now, crate::accounts::Job::Unasked);
+            follow_steps(st, m, sv, vec![(pane, look)], now)
+        }
+        Msg::JobChecked(pane, job) => {
+            let Some(rt) = st.panes.get_mut(&pane) else {
+                return Task::none();
+            };
+            controller::job_answered(rt);
+            let now = Instant::now();
+            let look = controller::account_follow(rt, m, now, job);
+            follow_steps(st, m, sv, vec![(pane, look)], now)
+        }
         Msg::FlushDrops => flush_drops(st, m),
         Msg::Paste(pane, text) => {
-            if let Some(rt) = st.panes.get(&pane) {
+            if let Some(rt) = st.panes.get_mut(&pane) {
+                controller::drafted(rt, m, Instant::now());
                 // No text: `^V`, as the pane's own Ctrl+V sends then, for a
                 // Claude Code to read the image that is on the clipboard.
                 let bytes = match text.filter(|t| !t.is_empty()) {
@@ -623,9 +664,7 @@ fn term_action(
             TermEvent::UserInput => {
                 // Between two turns, a key is a draft a restart would lose
                 // (`controller::account_follow`); in a turn, an answer.
-                if !m.live.panes_logic.is_mid_turn(&pane) {
-                    rt.drafted_at = Some(std::time::Instant::now());
-                }
+                controller::drafted(rt, m, Instant::now());
                 tasks.push(logic(Logic::Key { pane: pane.clone() }));
                 if m.workspace(&rt.ws).is_some_and(|ws| visible(m, ws, &pane)) {
                     tasks.push(logic(Logic::Typed {
@@ -661,12 +700,14 @@ fn flush_drops(st: &mut State, m: &Model) -> Task<Message> {
     }
     let mut tasks = Vec::new();
     for (pane, paths) in by_pane {
-        let Some(rt) = st.panes.get(&pane) else {
+        let Some(rt) = st.panes.get_mut(&pane) else {
             continue;
         };
         let Some((ws, model_pane)) = controller::find(m, &rt.ws, &pane) else {
             continue;
         };
+        // In the prompt, not sent: a draft.
+        controller::drafted(rt, m, Instant::now());
         let shell = controller::shell_of(m, ws, model_pane);
         let text = crate::panes_logic::file_drop::drop_text(&paths, model_pane.agent, shell);
         let bytes = rt.link.lock().paste_bytes(&text);
@@ -971,17 +1012,27 @@ pub fn on_intent(
         Intent::InsertTranscript(text) => {
             // For the terminal that has the keyboard; a text field with the
             // focus is its own package's to fill.
-            match keyboard_pane(m)
-                .filter(|_| keyboard_free(m))
-                .and_then(|pane| st.panes.get(&pane))
-            {
+            let rt = match keyboard_pane(m).filter(|_| keyboard_free(m)) {
+                Some(pane) => st.panes.get_mut(&pane),
+                None => None,
+            };
+            match rt {
                 Some(rt) => {
-                    let submit = if m.settings().voice_submit { "\r" } else { "" };
-                    rt.link.write(format!("{text}{submit}").into_bytes());
+                    let submit = m.settings().voice_submit;
+                    // Dictated and not sent: a draft, as if typed.
+                    if !submit {
+                        controller::drafted(rt, m, Instant::now());
+                    }
+                    let enter = if submit { "\r" } else { "" };
+                    rt.link.write(format!("{text}{enter}").into_bytes());
                     Some(Task::none())
                 }
                 None => None,
             }
+        }
+        Intent::PaneRespawned { from, to, .. } => {
+            carry_move(st, from, to);
+            None
         }
         _ => None,
     };
@@ -1325,8 +1376,10 @@ fn signature(st: &State, m: &Model) -> u64 {
     )
         .hash(&mut hash);
     std::mem::discriminant(&s.cursor_style).hash(&mut hash);
-    // A move to another account waits on the choices, the logins and each
-    // agent's turn (`controller::account_follow`).
+    // A move to another account waits on the choices, the logins, the
+    // account each pane runs on, and the turn of each pane waiting to move
+    // (`controller::account_follow`); a draft or a command of its own is
+    // looked at again on a timer of its own (`Msg::FollowWake`).
     let follows = !s.account_switch_ask;
     if follows {
         s.claude_account.hash(&mut hash);
@@ -1350,7 +1403,6 @@ fn signature(st: &State, m: &Model) -> u64 {
             pane.id.hash(&mut hash);
             if follows && pane.agent == crate::state::AgentId::Claude {
                 pane.claude_account.hash(&mut hash);
-                m.live.panes_logic.is_mid_turn(&pane.id).hash(&mut hash);
             }
             if pane.role.is_some() {
                 pane.role.hash(&mut hash);
@@ -1363,17 +1415,14 @@ fn signature(st: &State, m: &Model) -> u64 {
         m.ui.zoom_by_workspace.get(&ws.id).hash(&mut hash);
     }
     if follows {
-        // The account each runs on, and a draft that holds a move back until
-        // it is old enough to read as given up: looked at again every few
-        // seconds while one is recent.
         unordered(st.panes.iter().map(|(id, rt)| (id, &rt.account))).hash(&mut hash);
-        let now = std::time::Instant::now();
-        if st.panes.values().any(|rt| controller::drafting(rt, now)) {
-            (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_or(0, |since| since.as_secs() / 5))
-            .hash(&mut hash);
-        }
+        unordered(
+            st.panes
+                .iter()
+                .filter(|(_, rt)| rt.follow.pending)
+                .map(|(id, _)| (id, controller::turn_of(m, id))),
+        )
+        .hash(&mut hash);
     }
     unordered(
         st.panes
@@ -1486,7 +1535,10 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
         let Some((ws, pane)) = controller::find(m, ws_id, pane_id) else {
             continue;
         };
-        let (rt, task) = controller::mount(&st.hub, sv, m, ws, pane, will_measure(m, ws));
+        let (mut rt, task) = controller::mount(&st.hub, sv, m, ws, pane, will_measure(m, ws));
+        if let Some(carry) = st.moves.remove(pane_id) {
+            controller::moved_in(&mut rt, carry.to);
+        }
         st.panes.insert(pane_id.clone(), rt);
         tasks.push(task);
     }
@@ -1512,8 +1564,10 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
     }
 
     let locale = m.locale();
-    let now = std::time::Instant::now();
-    let mut moving = std::collections::HashMap::new();
+    let now = Instant::now();
+    st.moves
+        .retain(|_, carry| now.saturating_duration_since(carry.at) < CARRY_KEEP);
+    let mut looks = Vec::with_capacity(st.panes.len());
     for (id, rt) in st.panes.iter_mut() {
         let Some(ws) = m.workspace(&rt.ws) else {
             continue;
@@ -1540,20 +1594,13 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
             }
         }
         tasks.push(controller::role_check(rt, m, locale));
-        let (follow, to, moved) = controller::account_follow(rt, m, now);
-        if follow.pending() || follow == crate::accounts::Follow::NotLoggedIn {
-            moving.insert(
-                id.clone(),
-                crate::accounts::Moving {
-                    to,
-                    blocked: !follow.pending(),
-                },
-            );
-        }
-        tasks.push(moved);
+        let look = controller::account_follow(rt, m, now, crate::accounts::Job::Unasked);
+        looks.push((id.clone(), look));
     }
-    // What the pane headers say about a move to come.
-    m.live.accounts.moving = moving;
+    // Every pane was looked at: what the headers say about a move to come
+    // is said again from scratch.
+    m.live.accounts.moving.clear();
+    tasks.push(follow_steps(st, m, sv, looks, now));
     // A window that appeared is asked what scale it is at; those that went
     // are forgotten.
     st.scales.retain(|id, _| m.live.windows.contains_key(id));
@@ -1584,6 +1631,93 @@ fn sync(st: &mut State, m: &mut Model, sv: &Services) -> Task<Message> {
 
     st.synced = signature(st, m);
     Task::batch(tasks)
+}
+
+/// What the looks at the panes' accounts asked for
+/// (`controller::account_follow`): what each header says of its move, the
+/// questions about the commands the agents run, the timers, the restarts.
+fn follow_steps(
+    st: &mut State,
+    m: &mut Model,
+    sv: &Services,
+    looks: Vec<(PaneId, controller::FollowLook)>,
+    now: Instant,
+) -> Task<Message> {
+    use controller::FollowStep;
+    let mut tasks = Vec::new();
+    for (pane, (verdict, to, step)) in looks {
+        let blocked = verdict == crate::accounts::Follow::NotLoggedIn;
+        if verdict.pending() || blocked {
+            m.live.accounts.moving.insert(
+                pane.clone(),
+                crate::accounts::Moving {
+                    to: to.clone(),
+                    blocked,
+                },
+            );
+        } else {
+            m.live.accounts.moving.remove(&pane);
+        }
+        match step {
+            FollowStep::Nothing => {}
+            FollowStep::Ask => tasks.push(ask_job(sv, pane)),
+            FollowStep::Wake(at) => tasks.push(Task::perform(
+                tokio::time::sleep_until(tokio::time::Instant::from_std(at)),
+                move |()| Message::Panes(Msg::FollowWake(pane.clone(), at)),
+            )),
+            FollowStep::Restart => {
+                let Some(ws) = st.panes.get(&pane).map(|rt| rt.ws.clone()) else {
+                    continue;
+                };
+                // The pane the restart makes is told it is this move's
+                // (`carry_move`): it resumes the conversation, and is not
+                // restarted again if core starts it elsewhere.
+                st.moves.insert(pane.clone(), Carry { to, at: now });
+                tasks.push(intent(Intent::RestartPanes {
+                    ws,
+                    panes: vec![pane],
+                }));
+            }
+        }
+    }
+    Task::batch(tasks)
+}
+
+/// Asks, off the UI thread (the process table is read), whether the agent
+/// of `pane` has a command of its own still running below its shell: a
+/// build, a watch on its CI (`hangar_core::pty::pane_job`). A table that
+/// cannot be read is as good as a command running: the pane waits.
+fn ask_job(sv: &Services, pane: PaneId) -> Task<Message> {
+    use crate::accounts::Job;
+    let pty = sv.core().pty().clone();
+    let id = pane.clone();
+    Task::perform(
+        tokio::task::spawn_blocking(move || hangar_core::pty::pane_job(&pty, &id)),
+        move |answer| {
+            let job = match answer {
+                Ok(hangar_core::pty::PaneJob::Nothing) => Job::Nothing,
+                _ => Job::Busy,
+            };
+            Message::Panes(Msg::JobChecked(pane.clone(), job))
+        },
+    )
+}
+
+/// A pane restarted to move to another account (`follow_steps`) hands the
+/// move to the pane its restart made (`Intent::PaneRespawned`): the account
+/// it was started for, so that a launch core had to put on another one is
+/// not restarted again, and the resume of its conversation.
+fn carry_move(st: &mut State, from: &str, to: &PaneId) {
+    let Some(carry) = st.moves.remove(from) else {
+        return;
+    };
+    match st.panes.get_mut(to) {
+        Some(rt) => controller::moved_in(rt, carry.to),
+        // Mounted by a sync to come, which hands it over.
+        None => {
+            st.moves.insert(to.clone(), carry);
+        }
+    }
 }
 
 /// Republishes what other packages read of the panes.
@@ -1748,6 +1882,116 @@ mod tests {
             false,
             &[TermEvent::Write(b"\x1b[A".to_vec()), TermEvent::UserInput]
         ));
+    }
+
+    /// A move to another account is handed to the pane its restart makes,
+    /// under a new id: that pane resumes the conversation, and when core had
+    /// to start it on main all the same, it is not restarted again.
+    #[test]
+    fn an_account_move_is_handed_to_the_pane_its_restart_makes() {
+        use crate::accounts::{Follow, Job};
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+        use controller::FollowStep;
+
+        let mut h = Harness::new(hangar_i18n::Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut st = State::default();
+        let mut rt = controller::mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        st.panes.insert("p1".into(), rt);
+
+        // Nothing runs below it: it moves, and the move waits for its pane.
+        let now = Instant::now();
+        let rt = st.panes.get_mut("p1").expect("p1");
+        let (verdict, to, step) = controller::account_follow(rt, &h.model, now, Job::Nothing);
+        assert_eq!((verdict, step), (Follow::Now, FollowStep::Restart));
+        st.moves.insert("p1".into(), Carry { to, at: now });
+
+        // The restart, as the shell makes it: the pane under a new id.
+        let next = h
+            .model
+            .apply(StoreAction::RespawnPane {
+                ws: "w1".into(),
+                pane: "p1".into(),
+                patch: Patch::none(),
+            })
+            .pane
+            .expect("respawned");
+        assert_ne!(next, "p1");
+        st.panes.remove("p1");
+        let (ws, pane) = controller::find(&h.model, "w1", &next).expect("the new pane");
+        st.panes.insert(next.clone(), controller::mounted(ws, pane));
+        carry_move(&mut st, "p1", &next);
+        assert!(st.moves.is_empty());
+
+        let rt = st.panes.get_mut(&next).expect("the new pane");
+        assert!(rt.moved, "its launch resumes the conversation");
+        assert_eq!(rt.moved_to.as_deref(), Some("perso"));
+        // Core started it on main all the same: it stays there.
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        h.model
+            .live
+            .panes_logic
+            .seed_activity(&next, "w1", AgentActivity::Yours);
+        let (verdict, _, step) = controller::account_follow(rt, &h.model, now, Job::Nothing);
+        assert_eq!((verdict, step), (Follow::Stay, FollowStep::Nothing));
+
+        // Announced before its pane is mounted: the mount takes it over.
+        let mut st = State::default();
+        st.moves.insert(
+            "a".into(),
+            Carry {
+                to: "perso".into(),
+                at: now,
+            },
+        );
+        carry_move(&mut st, "a", &"b".to_string());
+        assert_eq!(
+            st.moves.get("b").map(|carry| carry.to.as_str()),
+            Some("perso")
+        );
+    }
+
+    /// Only a pane waiting to move to another account is looked at again
+    /// when its turn changes: an agent that is not does not make each of its
+    /// turns a sync, and a draft is no part of the signature (its timer
+    /// looks at it again, `Msg::FollowWake`).
+    #[test]
+    fn only_the_turn_of_a_pane_waiting_to_move_is_part_of_the_signature() {
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+
+        let mut h = Harness::new(hangar_i18n::Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut st = State::default();
+        let mut rt = controller::mounted(&ws, &ws.panes[0]);
+        rt.drafted_at = Some(Instant::now());
+        st.panes.insert("p1".into(), rt);
+        let before = signature(&st, &h.model);
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Working);
+        assert_eq!(signature(&st, &h.model), before, "not waiting to move");
+
+        st.panes.get_mut("p1").expect("p1").follow.pending = true;
+        let waiting = signature(&st, &h.model);
+        assert_ne!(waiting, before);
+        assert_eq!(signature(&st, &h.model), waiting, "time changes nothing");
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        assert_ne!(signature(&st, &h.model), waiting, "its turn is over");
     }
 }
 

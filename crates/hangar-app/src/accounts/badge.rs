@@ -47,8 +47,8 @@ fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, M
     tip::over(ctx.theme, label, title)
 }
 
-/// « → Perso »: the pane moves to that account once its turn (or what the
-/// person is typing in it) is over; in the danger colour when it cannot,
+/// « → Perso »: the pane moves to that account once Hangar knows it has
+/// nothing to lose (`switch::follow`); in the danger colour when it cannot,
 /// that account not being logged in.
 fn moving_chip<'a>(
     ctx: Ctx<'a>,

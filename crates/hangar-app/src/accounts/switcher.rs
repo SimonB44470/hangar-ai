@@ -22,10 +22,12 @@ use iced::{Alignment, Element, Length, Padding};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
+use crate::navigator::plan::{shown_pct, window_label};
+use crate::panes_logic::wall_clock_ms;
 use crate::state::WsId;
 
 use super::model::{AccountId, ClaudeAccount, resolve_account};
-use super::switch::{AccountUsage, account_name, usage_percent};
+use super::switch::{AccountUsage, FIVE_HOUR, WEEKLY, account_name};
 use super::{Msg, State, live};
 
 /// What a click on a row changes: the workspace on screen (the main action),
@@ -137,39 +139,36 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
         .into()
 }
 
-/// What is known of an account's limits, one window after the other, or a
-/// single word when nothing is: a window never reported is left out rather
-/// than called « unknown » twice over.
+/// What is known of an account's limits, one window after the other as the
+/// plan block draws them (`plan::limits`: a gateway's windows too, and a
+/// window past its reset empty), or a single word when nothing is: a window
+/// never reported is left out rather than called « unknown ».
 fn usage_line(t: Translator, usage: Option<&AccountUsage>) -> String {
-    let windows = [
-        (
-            Key::AccountsSwitcherFive,
-            usage.and_then(|usage| usage.five_hour.as_ref()),
-        ),
-        (
-            Key::AccountsSwitcherWeek,
-            usage.and_then(|usage| usage.weekly.as_ref()),
-        ),
-    ];
-    let known: Vec<String> = windows
-        .into_iter()
-        .filter_map(|(name, window)| {
-            let n = usage_percent(window)?;
-            let value = t.t_with(Key::AccountsSwitcherPercent, &args!("n" => n));
-            Some(
-                t.t_with(
-                    Key::AccountsSwitcherWindow,
-                    &args!("window" => t.t(name).as_ref(), "value" => value.as_ref()),
-                )
-                .into_owned(),
-            )
-        })
-        .collect();
-    if known.is_empty() {
-        t.t(Key::AccountsSwitcherNoFigures).into_owned()
-    } else {
-        known.join(" · ")
+    let now = i64::try_from(wall_clock_ms()).unwrap_or_default();
+    let windows = usage.map(super::plan::limits).unwrap_or_default();
+    if windows.is_empty() {
+        return t.t(Key::AccountsSwitcherNoFigures).into_owned();
     }
+    windows
+        .iter()
+        .map(|limit| {
+            let name = match limit.kind.as_str() {
+                FIVE_HOUR => t.t(Key::AccountsSwitcherFive).into_owned(),
+                WEEKLY => t.t(Key::AccountsSwitcherWeek).into_owned(),
+                other => window_label(t, other),
+            };
+            let value = t.t_with(
+                Key::AccountsSwitcherPercent,
+                &args!("n" => shown_pct(limit, now)),
+            );
+            t.t_with(
+                Key::AccountsSwitcherWindow,
+                &args!("window" => name.as_str(), "value" => value.as_ref()),
+            )
+            .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The list: a heading and a row per account.

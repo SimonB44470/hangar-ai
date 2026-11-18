@@ -587,9 +587,11 @@ pub struct Settings {
     /// `"main"` by default; `null` is kept as the person wrote it.
     pub claude_account: Option<String>,
     /// Ask « restart the running agents now? » when an account is chosen,
-    /// as before. Off, the agents move to the new account by themselves,
-    /// each between two of its turns (`accounts::switch::follow`). Written
-    /// only when on, so a file from before stays as it was.
+    /// as before. Off, each agent moves to the new account by itself, on its
+    /// conversation, once Hangar knows it has nothing to lose: its turn over
+    /// as its mod reports it, nothing typed, no command of its own running
+    /// (`accounts::switch::follow`). Written only when on, so a file from
+    /// before stays as it was.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub account_switch_ask: bool,
     pub experiments: Vec<String>,

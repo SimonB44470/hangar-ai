@@ -90,6 +90,7 @@ fn the_list_has_a_row_per_account_with_its_figures_and_both_scopes() {
         AccountUsage {
             five_hour: window(40.0),
             weekly: window(55.4),
+            ..AccountUsage::default()
         },
     )]);
     let mut st = State::default();
@@ -1145,6 +1146,7 @@ fn reported(h: &mut Harness) {
             AccountUsage {
                 five_hour: window(37.0),
                 weekly: window(22.0),
+                ..AccountUsage::default()
             },
         ),
         (
@@ -1152,6 +1154,7 @@ fn reported(h: &mut Harness) {
             AccountUsage {
                 five_hour: window(93.0),
                 weekly: None,
+                ..AccountUsage::default()
             },
         ),
     ]);
