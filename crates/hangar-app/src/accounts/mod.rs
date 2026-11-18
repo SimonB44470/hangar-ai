@@ -7,9 +7,9 @@
 //! accounts panes were launched on), `switch` (restart sets, usage, labels),
 //! `usage` (the usage cache on disk), `menu_items` (the lines of the
 //! navigator's and the pane's menus), `switcher` (the toolbar button),
-//! `badge`, `style` (the tone and icon chosen for an account, drawn by every
-//! label that names one), `picker` (the workspace dialog's select) and `settings_page` (Settings ›
-//! Accounts).
+//! `badge`, `account_style` (the tone and icon chosen for an account, drawn
+//! by every label that names one), `picker` (the workspace dialog's select)
+//! and `settings_page` (Settings › Accounts).
 //!
 //! # What other packages call
 //!
@@ -22,11 +22,11 @@
 //!   usage counts against the account it was launched on, and "running" in
 //!   the switcher's question means "has noted an account".
 
+mod account_style;
 mod badge;
 mod menu_items;
 mod picker;
 mod settings_page;
-mod style;
 mod switch;
 mod switcher;
 #[cfg(test)]
@@ -154,8 +154,8 @@ pub enum Msg {
     SetBadges(bool),
     /// The tone of an account's badge; `None` takes it back to plain.
     SetTone(AccountId, Option<crate::state::AccountTone>),
-    /// The icon of an account's badge, by name; `None` takes it off.
-    SetIcon(AccountId, Option<String>),
+    /// The icon of an account's badge; `None` takes it off.
+    SetIcon(AccountId, Option<hangar_ui::Icon>),
     LogIn(AccountId),
     AddInput(String),
     AddSubmit,

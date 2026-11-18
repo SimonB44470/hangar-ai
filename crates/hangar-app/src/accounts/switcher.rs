@@ -8,6 +8,11 @@
 //! the click first asks whether to restart them now (their conversations are
 //! kept) or on their next launch.
 //!
+//! The button and each row draw the account in the tone and with the icon
+//! chosen for it (`account_style`), the default account included: the
+//! navigator and the pane headers only name an account other than the
+//! default, so this is where the default's own colour shows.
+//!
 //! Switching is always this click: nothing here rotates accounts by itself.
 //! The email of an account is in the tooltip of its row and appears nowhere
 //! else.
@@ -26,7 +31,7 @@ use crate::state::WsId;
 
 use super::model::{AccountId, ClaudeAccount, resolve_account};
 use super::switch::{AccountUsage, account_name, usage_percent};
-use super::{Msg, State, live};
+use super::{Msg, State, account_style, live};
 
 /// What a click on a row changes: the workspace on screen (the main action),
 /// or the default every workspace without an account of its own follows.
@@ -95,17 +100,20 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
             .wrapping(Wrapping::None),
     )
     .max_width(120.0);
+    // The account's own icon and tone when it has them, the bolt otherwise.
+    let mark = account_style::of(ctx, &current);
+    let glyph = icon(mark.icon.unwrap_or(Icon::Bolt), tokens::size::ICON);
+    let glyph = match mark.tone {
+        Some(tone) => glyph.color(account_style::ink(t, tone)),
+        None => glyph,
+    };
     // Centred in the button's height, level with the toolbar's other
     // buttons: a button lays its content out from the top.
     let anchor = button(
         container(
-            row![
-                icon(Icon::Bolt, tokens::size::ICON),
-                label,
-                icon(Icon::ChevronDown, 12.0),
-            ]
-            .spacing(tokens::space::SM)
-            .align_y(Alignment::Center),
+            row![glyph, label, icon(Icon::ChevronDown, 12.0)]
+                .spacing(tokens::space::SM)
+                .align_y(Alignment::Center),
         )
         .center_y(Length::Fill),
     )
@@ -200,7 +208,21 @@ fn account_row<'a>(
     } else {
         Space::new().width(tokens::size::ICON).into()
     };
-    let mut name = row![text(account.label.as_str()).size(tokens::font_size::BODY)];
+    let mark = account_style::of(ctx, &account.id);
+    let label: Element<'a, Message> = if mark.is_plain() {
+        text(account.label.as_str())
+            .size(tokens::font_size::BODY)
+            .into()
+    } else {
+        account_style::label(
+            t,
+            mark,
+            account.label.clone(),
+            tokens::font_size::BODY,
+            None,
+        )
+    };
+    let mut name = row![label].align_y(Alignment::Center);
     if !account.logged_in {
         name = name.push(
             text(format!(" · {}", ctx.t(Key::AccountsSwitcherNotLoggedIn)))

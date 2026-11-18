@@ -1,103 +1,137 @@
 //! How an account is marked: what the person chose for it in Settings ›
 //! Accounts, a tone of the theme and an icon, drawn the same wherever the
 //! account is named (a navigator row, a pane header, the toolbar's button
-//! and menu, the plan block). With several subscriptions side by side, a
-//! colour tells them apart at a glance where a grey word has to be read.
+//! and its menu). With several subscriptions side by side, a colour tells
+//! them apart at a glance where a grey word has to be read.
 //!
 //! The tones are the theme's own (`Tone`), never a colour of the person's:
 //! each one is held to its contrast on every theme, light or dark, as the
-//! other badges are. Without a choice an account keeps the plain label it
-//! always had.
+//! other badges are. Without a choice, with coloured badges off, or with a
+//! single account (nothing to tell apart), an account keeps the plain label
+//! it always had.
 
-use hangar_theme::{Theme, fonts, style, tokens};
+use hangar_i18n::Key;
+use hangar_theme::{Theme, style, tokens};
+use hangar_ui::badge::{self, Tone};
 use hangar_ui::{Icon, icon};
 use iced::widget::text::Wrapping;
-use iced::widget::{container, row, text};
-use iced::{Alignment, Color, Element, Padding};
+use iced::widget::{row, text};
+use iced::{Alignment, Color, Element};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
 use crate::state::{AccountStyle, AccountTone};
 
-/// The icons an account can wear, in the order the settings offer them: a
-/// few that say what a subscription is for, not the whole set.
-pub const ICONS: [Icon; 10] = [
-    Icon::Bolt,
-    Icon::Workspace,
-    Icon::Folder,
-    Icon::Gamepad,
-    Icon::Cube,
-    Icon::Flag,
-    Icon::Bookmark,
-    Icon::Terminal,
-    Icon::Moon,
-    Icon::Lock,
+use super::live;
+
+/// The icons an account can wear, in the order the settings offer them, each
+/// with the name its button's tooltip gives: a few that say what a
+/// subscription is for, not the whole set.
+pub const ICONS: [(Icon, Key); 10] = [
+    (Icon::Bolt, Key::AccountsSettingsIconBolt),
+    (Icon::Workspace, Key::AccountsSettingsIconWorkspace),
+    (Icon::Folder, Key::AccountsSettingsIconFolder),
+    (Icon::Gamepad, Key::AccountsSettingsIconGamepad),
+    (Icon::Cube, Key::AccountsSettingsIconCube),
+    (Icon::Flag, Key::AccountsSettingsIconFlag),
+    (Icon::Bookmark, Key::AccountsSettingsIconBookmark),
+    (Icon::Terminal, Key::AccountsSettingsIconTerminal),
+    (Icon::Moon, Key::AccountsSettingsIconMoon),
+    (Icon::Lock, Key::AccountsSettingsIconLock),
 ];
 
-/// The style chosen for account `id`, if any, and only while coloured
-/// badges are on: off, every account keeps its plain label.
-pub fn of<'a>(ctx: Ctx<'a>, id: &str) -> Option<&'a AccountStyle> {
-    let settings = ctx.model.settings();
-    if !settings.account_badges {
-        return None;
+/// What an account's label is drawn with: the tone and the icon this version
+/// can draw of the style chosen for it. Plain is neither.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Mark {
+    pub tone: Option<AccountTone>,
+    pub icon: Option<Icon>,
+}
+
+impl Mark {
+    /// The mark of `chosen`; an icon this version does not know is none.
+    pub fn of_style(chosen: &AccountStyle) -> Mark {
+        Mark {
+            tone: chosen.tone,
+            icon: chosen.icon.as_deref().and_then(Icon::from_name),
+        }
     }
-    settings.account_styles.get(id)
+
+    /// Nothing to draw but the name.
+    pub fn is_plain(self) -> bool {
+        self.tone.is_none() && self.icon.is_none()
+    }
+}
+
+/// Whether accounts wear their marks: coloured badges are on, and there are
+/// at least two accounts to tell apart. With a single one, Settings ›
+/// Accounts does not offer the switch, so nothing of it may show either.
+pub fn shown(ctx: Ctx<'_>) -> bool {
+    ctx.model.settings().account_badges
+        && live(ctx)
+            .accounts
+            .as_ref()
+            .is_some_and(|all| all.len() >= 2)
+}
+
+/// The mark of account `id`: what was chosen for it while marks are
+/// `shown`, plain otherwise. A choice made stays in the settings while they
+/// are not shown, for when they are again.
+pub fn of(ctx: Ctx<'_>, id: &str) -> Mark {
+    if !shown(ctx) {
+        return Mark::default();
+    }
+    Mark::of_style(&ctx.model.settings().account_style(id))
 }
 
 /// The theme's tone a choice names.
-pub fn tone(tone: AccountTone) -> style::Tone {
-    match tone {
-        AccountTone::Accent => style::Tone::Accent,
-        AccountTone::Success => style::Tone::Success,
-        AccountTone::Warning => style::Tone::Warning,
-        AccountTone::Danger => style::Tone::Danger,
+pub fn tone(chosen: AccountTone) -> Tone {
+    match chosen {
+        AccountTone::Accent => Tone::Accent,
+        AccountTone::Success => Tone::Success,
+        AccountTone::Warning => Tone::Warning,
+        AccountTone::Danger => Tone::Danger,
     }
 }
 
-/// The icon a style names; a name this version does not know is no icon.
-pub fn icon_of(style: Option<&AccountStyle>) -> Option<Icon> {
-    style?.icon.as_deref().and_then(Icon::from_name)
+/// The colour a tone's words and icon take, on the theme's tint of it.
+pub fn ink(t: &Theme, chosen: AccountTone) -> Color {
+    style::container::tone_text(t, tone(chosen))
 }
 
-/// The colour an account's words and icon take: its tone's, or `plain`.
-pub fn ink(t: &Theme, style: Option<&AccountStyle>, plain: Color) -> Color {
-    match style.and_then(|style| style.tone) {
-        Some(chosen) => style::container::tone_text(t, tone(chosen)),
-        None => plain,
-    }
-}
-
-/// An account's name as a label of `size`: in a capsule of its tone, with its
-/// icon, when it has a style; the plain word in `plain` otherwise. It never
-/// wraps: a container around it decides how wide it may grow.
+/// An account's name as a label of `size`, as `mark` says: in a badge of its
+/// tone, with its icon, when it has a tone; else the plain word, after its
+/// icon if it has one, in `plain` (or in the colour around it, `None`). It
+/// never wraps: what holds it decides how wide it may grow.
 pub fn label<'a>(
     t: &'a Theme,
-    style: Option<&AccountStyle>,
+    mark: Mark,
     name: String,
     size: f32,
-    plain: Color,
+    plain: Option<Color>,
 ) -> Element<'a, Message> {
-    let color = ink(t, style, plain);
-    let words = text(name).size(size).wrapping(Wrapping::None).color(color);
-    let tone = style.and_then(|style| style.tone);
-    let words = if tone.is_some() {
-        words.font(fonts::ui_medium())
-    } else {
-        words
+    if let Some(chosen) = mark.tone {
+        return badge::named(t, name, tone(chosen))
+            .icon(mark.icon)
+            .size(size)
+            .into();
+    }
+    let words = text(name)
+        .size(size)
+        .wrapping(Wrapping::None)
+        .color_maybe(plain);
+    let Some(glyph) = mark.icon else {
+        return words.into();
     };
-    let mut content = row![].spacing(tokens::space::XS).align_y(Alignment::Center);
-    if let Some(glyph) = icon_of(style) {
-        content = content.push(icon(glyph, (size + 1.0).round()).color(color));
-    }
-    content = content.push(words);
-    match tone {
-        Some(chosen) => container(content)
-            .padding(Padding::from([1.0, tokens::space::SM]))
-            .align_y(Alignment::Center)
-            .style(style::container::badge(t, self::tone(chosen)))
-            .into(),
-        None => content.into(),
-    }
+    let glyph = icon(glyph, badge::icon_side(size));
+    let glyph = match plain {
+        Some(color) => glyph.color(color),
+        None => glyph,
+    };
+    row![glyph, words]
+        .spacing(tokens::space::XS)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 #[cfg(test)]
@@ -109,12 +143,7 @@ mod tests {
         let tones: Vec<_> = AccountTone::ALL.into_iter().map(tone).collect();
         assert_eq!(
             tones,
-            [
-                style::Tone::Accent,
-                style::Tone::Success,
-                style::Tone::Warning,
-                style::Tone::Danger
-            ]
+            [Tone::Accent, Tone::Success, Tone::Warning, Tone::Danger]
         );
     }
 
@@ -124,11 +153,12 @@ mod tests {
             icon: Some(name.into()),
             ..AccountStyle::default()
         };
-        assert_eq!(icon_of(Some(&named("gamepad"))), Some(Icon::Gamepad));
-        assert_eq!(icon_of(Some(&named("unicorn"))), None);
-        assert_eq!(icon_of(None), None);
+        assert_eq!(Mark::of_style(&named("gamepad")).icon, Some(Icon::Gamepad));
+        assert_eq!(Mark::of_style(&named("unicorn")).icon, None);
+        assert!(Mark::of_style(&named("unicorn")).is_plain());
+        assert!(Mark::of_style(&AccountStyle::default()).is_plain());
         // Each icon offered is stored under a name that reads back.
-        for glyph in ICONS {
+        for (glyph, _) in ICONS {
             assert_eq!(Icon::from_name(glyph.name()), Some(glyph));
         }
     }

@@ -2,7 +2,7 @@
 //! (`AccountBadge.tsx`, `PaneAccountBadge.tsx`, and the navigator's
 //! `accountBadge`). It shows the account's label, never its email, and it is
 //! a label, not a control: in the tone and with the icon chosen for the
-//! account (`style`), or as a plain grey word.
+//! account (`account_style`), or as a plain grey word.
 
 use hangar_i18n::{Key, args};
 use hangar_theme::tokens;
@@ -17,7 +17,7 @@ use crate::state::{PaneId, WsId};
 
 use super::model::{AccountSource, ClaudeAccount, resolve_account};
 use super::switch::account_name;
-use super::{live, style};
+use super::{account_style, live};
 
 /// How wide a label grows before it is cut (`max-width: 10em` at 10 px).
 const MAX_WIDTH: f32 = 100.0;
@@ -38,12 +38,12 @@ fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, M
         .i18n
         .t_with(Key::AccountsBadgeTitle, &args!("name" => name.as_str()))
         .into_owned();
-    let label = container(style::label(
+    let label = container(account_style::label(
         ctx.theme,
-        style::of(ctx, id),
+        account_style::of(ctx, id),
         name,
         tokens::font_size::MICRO,
-        ctx.theme.colors.fg_secondary,
+        Some(ctx.theme.colors.fg_secondary),
     ))
     .max_width(MAX_WIDTH);
     tip::over(ctx.theme, label, title)

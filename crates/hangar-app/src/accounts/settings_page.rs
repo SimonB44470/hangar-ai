@@ -15,12 +15,11 @@ use crate::ctx::Ctx;
 use crate::message::Message;
 use crate::services::Services;
 use crate::state::types::AgentId;
-use crate::state::{
-    AccountStyle, AccountTone, Model, Pane, Patch, Settings, StoreAction, Workspace,
-};
+use crate::state::{AccountTone, Model, Pane, Patch, Settings, StoreAction, Workspace};
 
+use super::account_style::{self, Mark};
 use super::model::{AccountId, ClaudeAccount, MAIN_ACCOUNT, names_account, resolve_account};
-use super::{Msg, live, style as badge_style};
+use super::{Msg, live};
 
 /// What the page itself remembers: the form it has open, the command it
 /// waits for, the last failure.
@@ -171,24 +170,6 @@ fn forget_account(m: &mut Model, id: &str) {
             },
         )));
     }
-}
-
-/// `change` applied to the style of account `id`, which is dropped from the
-/// file once nothing is left in it.
-fn restyle(
-    m: &mut Model,
-    id: AccountId,
-    change: impl Fn(&mut AccountStyle) + Send + Sync + 'static,
-) {
-    m.apply(StoreAction::UpdateSettings(Patch::new(
-        move |settings: &mut Settings| {
-            let style = settings.account_styles.entry(id.clone()).or_default();
-            change(style);
-            if style.is_empty() {
-                settings.account_styles.remove(&id);
-            }
-        },
-    )));
 }
 
 /// The three messages that start a command of the backend are the only ones
@@ -357,11 +338,17 @@ pub(super) fn step(page: &mut Page, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::SetTone(id, tone) => {
-            restyle(m, id, move |style| style.tone = tone);
+            m.apply(StoreAction::UpdateSettings(Patch::new(
+                move |settings: &mut Settings| settings.set_account_tone(&id, tone),
+            )));
             Task::none()
         }
-        Msg::SetIcon(id, icon) => {
-            restyle(m, id, move |style| style.icon = icon.clone());
+        Msg::SetIcon(id, glyph) => {
+            m.apply(StoreAction::UpdateSettings(Patch::new(
+                move |settings: &mut Settings| {
+                    settings.set_account_icon(&id, glyph.map(Icon::name));
+                },
+            )));
             Task::none()
         }
         Msg::LogIn(id) => {
@@ -460,7 +447,11 @@ pub fn view<'a>(page: &'a Page, ctx: Ctx<'a>) -> Element<'a, Message> {
         .map(|account| account_row(page, ctx, accounts, account, &default_id))
         .collect();
     body = body.push(form::group(t, rows));
-    body = body.push(badges_switch(page, ctx));
+    // With a single account there is nothing to tell apart: no badge shows,
+    // so none is offered.
+    if accounts.len() >= 2 {
+        body = body.push(badges_switch(page, ctx));
+    }
     body = body.push(add_form(page, ctx, accounts));
 
     form::section(t, ctx.t(Key::AccountsSettingsTitle))
@@ -538,7 +529,7 @@ fn account_row<'a>(
         },
     ));
 
-    if ctx.model.settings().account_badges {
+    if account_style::shown(ctx) {
         lines = lines.push(badge_editor(page, ctx, account));
     }
 
@@ -580,26 +571,19 @@ fn badges_switch<'a>(page: &'a Page, ctx: Ctx<'a>) -> Element<'a, Message> {
 }
 
 /// How the account is marked: a choice of tone, each shown as the badge it
-/// makes, then a choice of icon. What is chosen shows at once everywhere the
-/// account is named.
+/// makes, then a choice of icon, each named in its tooltip. What is chosen
+/// shows at once everywhere the account is named.
 fn badge_editor<'a>(
     page: &'a Page,
     ctx: Ctx<'a>,
     account: &'a ClaudeAccount,
 ) -> Element<'a, Message> {
     let t = ctx.theme;
-    let current = badge_style::of(ctx, &account.id);
-    let chosen_tone = current.and_then(|style| style.tone);
-    let chosen_icon = badge_style::icon_of(current);
+    let current = account_style::of(ctx, &account.id);
     let idle = !page.busy;
 
     let mut tones = row![].spacing(tokens::space::XS).align_y(Alignment::Center);
     for tone in std::iter::once(None).chain(AccountTone::ALL.into_iter().map(Some)) {
-        let preview = AccountStyle {
-            tone,
-            icon: current.and_then(|style| style.icon.clone()),
-            ..AccountStyle::default()
-        };
         let name = match tone {
             None => Key::AccountsSettingsToneNone,
             Some(AccountTone::Accent) => Key::AccountsSettingsToneAccent,
@@ -607,16 +591,17 @@ fn badge_editor<'a>(
             Some(AccountTone::Warning) => Key::AccountsSettingsToneWarning,
             Some(AccountTone::Danger) => Key::AccountsSettingsToneDanger,
         };
-        let choice = iced::widget::button(badge_style::label(
+        let preview = account_style::label(
             t,
-            Some(&preview),
+            Mark { tone, ..current },
             account.label.clone(),
             tokens::font_size::MICRO,
-            t.colors.fg_secondary,
-        ))
-        .padding(Padding::from([tokens::space::XXS, tokens::space::XS]))
-        .style(hangar_theme::style::button::toggle(t, tone == chosen_tone))
-        .on_press_maybe(idle.then(|| press(Msg::SetTone(account.id.clone(), tone))));
+            Some(t.colors.fg_secondary),
+        );
+        let choice = iced::widget::button(preview)
+            .padding(Padding::from([tokens::space::XXS, tokens::space::XS]))
+            .style(style::button::toggle(t, tone == current.tone))
+            .on_press_maybe(idle.then(|| press(Msg::SetTone(account.id.clone(), tone))));
         tones = tones.push(hangar_ui::tip::bottom(t, choice, ctx.t(name)));
     }
 
@@ -627,22 +612,15 @@ fn badge_editor<'a>(
         iced::widget::text(ctx.t(Key::AccountsSettingsIconNone)).size(tokens::font_size::LABEL),
     )
     .padding(Padding::from([tokens::space::XXS, tokens::space::SM]))
-    .style(hangar_theme::style::button::toggle(
-        t,
-        chosen_icon.is_none(),
-    ))
+    .style(style::button::toggle(t, current.icon.is_none()))
     .on_press_maybe(idle.then(|| press(Msg::SetIcon(account.id.clone(), None))));
     icons = icons.push(none);
-    for glyph in badge_style::ICONS {
+    for (glyph, name) in account_style::ICONS {
         icons = icons.push(
-            ui_button::toggle_button(t, glyph, chosen_icon == Some(glyph))
+            ui_button::toggle_button(t, glyph, current.icon == Some(glyph))
                 .small()
-                .on_press_maybe(idle.then(|| {
-                    press(Msg::SetIcon(
-                        account.id.clone(),
-                        Some(glyph.name().to_string()),
-                    ))
-                })),
+                .tip(ctx.t(name))
+                .on_press_maybe(idle.then(|| press(Msg::SetIcon(account.id.clone(), Some(glyph))))),
         );
     }
 
