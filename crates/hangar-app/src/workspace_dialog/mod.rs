@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use hangar_engine::accounts::DEFAULT_CHOICE;
 use hangar_i18n::{Key, Translator, args};
 use iced::widget::{Id, operation};
 use iced::{Element, Subscription, Task};
@@ -44,7 +45,8 @@ use crate::git_flow::paths::{projects_folder_of, resolve_parent};
 use crate::message::{GitOrigin, Intent, Message};
 use crate::services::{CoreEvent, Services, dialogs};
 use crate::shell::{Notice, Overlay};
-use crate::state::types::{AgentId, WorkspaceKit};
+use crate::state::folders;
+use crate::state::types::{AgentId, WorkspaceFolder, WorkspaceKit};
 use crate::state::{Model, Patch, StoreAction, WsId};
 
 use folder::{FolderForm, Root};
@@ -224,11 +226,8 @@ pub struct State {
     /// The workspace whose kits are open (`Overlay::KitsDialog`).
     kits: Option<kits_dialog::KitsDialog>,
     /// The navigator folder the new workspace is filed in, when the form was
-    /// opened from one.
+    /// opened from one (`Intent::NewWorkspaceInFolder`).
     in_folder: Option<String>,
-    /// The folder the form is about to open for (`NewWorkspaceInFolder`),
-    /// taken when it does.
-    next_folder: Option<String>,
 }
 
 /// The package's shared read-model, which other packages may read; lives in
@@ -387,14 +386,42 @@ impl State {
         *self = State::default();
     }
 
-    /// The name of the folder the workspace is filed in, while it exists.
-    pub(crate) fn target_folder<'a>(&self, m: &'a Model) -> Option<&'a str> {
+    /// The folder the workspace is filed in, while it exists.
+    pub(crate) fn target_folder<'a>(&self, m: &'a Model) -> Option<&'a WorkspaceFolder> {
         let id = self.in_folder.as_deref()?;
-        m.state()
-            .folders
-            .iter()
-            .find(|folder| folder.id == id)
-            .map(|folder| folder.name.as_str())
+        m.state().folders.iter().find(|folder| folder.id == id)
+    }
+
+    /// The account the workspace made here runs on when the person picks
+    /// none: its folder's, read and never copied (`folders::account_of`). Not
+    /// for a workspace its node runs: it has no folder level.
+    fn inherited_account<'a>(&self, m: &'a Model) -> Option<&'a str> {
+        if self.place.node.is_some() {
+            return None;
+        }
+        folders::folder_account(self.target_folder(m)?)
+    }
+
+    /// What picking `id` in the account picker chooses, as the workspace
+    /// keeps it: « Default » inside a folder that names an account is the
+    /// person's default over the folder's (`DEFAULT_CHOICE`); anywhere else,
+    /// no choice of its own.
+    fn picked_account(&self, m: &Model, id: Option<String>) -> Option<String> {
+        match id {
+            None if self.inherited_account(m).is_some() => Some(DEFAULT_CHOICE.to_string()),
+            id => id,
+        }
+    }
+
+    /// What the account picker shows checked: the choice made, else the
+    /// folder's account the workspace will run on. (TODO(PR #20, phase 2):
+    /// the picker gets its own « Folder default (…) » line for that.)
+    pub(crate) fn shown_account<'a>(&'a self, m: &'a Model) -> Option<&'a str> {
+        match self.folder.claude_account.as_deref() {
+            Some(DEFAULT_CHOICE) => None,
+            None => self.inherited_account(m),
+            own => own,
+        }
     }
 }
 
@@ -678,7 +705,7 @@ fn form(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Account(id) => {
-            st.folder.claude_account = id;
+            st.folder.claude_account = st.picked_account(m, id);
             Task::none()
         }
         Msg::MoreOptions => {
@@ -1008,7 +1035,7 @@ fn node_cloned(
         ]);
     }
     let start = folder::start_of(false, m.ui.claude_installed);
-    let Some(draft) = folder::draft_of(&FolderForm {
+    let Some(mut draft) = folder::draft_of(&FolderForm {
         name: &st.name,
         cwd: &cloned.path,
         roots: &[],
@@ -1021,6 +1048,8 @@ fn node_cloned(
     }) else {
         return Task::none();
     };
+    // Filed where the dialog says, as a clone on this computer is.
+    draft.folder_id = st.in_folder.clone();
     let mut tasks = vec![close(m)];
     if cloned.reused {
         tasks.push(notice(
@@ -1081,6 +1110,13 @@ fn submit_folder(st: &mut State, m: &mut Model, kits: &[WorkspaceKit]) -> Task<M
     // A workspace on a node takes no kit: kits of remote files come later.
     let kits: &[WorkspaceKit] = if remote.is_some() { &[] } else { kits };
     let start = start_of(st, m);
+    // « Default » over a folder's account means nothing to a workspace its
+    // node runs: it has no folder level.
+    let account = st
+        .folder
+        .claude_account
+        .as_deref()
+        .filter(|id| remote.is_none() || *id != DEFAULT_CHOICE);
     let Some(mut draft) = folder::draft_of(&FolderForm {
         name: &st.name,
         cwd: &st.folder.cwd,
@@ -1090,15 +1126,13 @@ fn submit_folder(st: &mut State, m: &mut Model, kits: &[WorkspaceKit]) -> Task<M
         assignments: &st.folder.assignments,
         shell_id: st.folder.shell_id.as_deref(),
         kits,
-        claude_account: st.folder.claude_account.as_deref(),
+        claude_account: account,
     }) else {
         return Task::none();
     };
-    // A folder removed while the form was open files it nowhere.
-    draft.folder_id = st
-        .in_folder
-        .clone()
-        .filter(|id| m.state().folders.iter().any(|folder| folder.id == *id));
+    // Filed where the form was opened from (a folder removed meanwhile: the
+    // store files it nowhere).
+    draft.folder_id = st.in_folder.clone();
     let mut tasks = vec![close(m)];
     let hooks = folder::hooks_of(&st.folder.hooks);
     if let Some(id) = make_workspace(m, draft, remote, hooks, start) {
@@ -1291,13 +1325,14 @@ pub fn on_intent(
 ) -> Option<Task<Message>> {
     match intent {
         Intent::OpenOverlay(Overlay::WorkspaceDialog) => {
-            opened(st, m);
+            opened(st);
             Some(Task::none())
         }
         Intent::OpenOnAnotherMachine(ws) => Some(open_elsewhere(st, m, ws)),
-        // The same form, for a workspace filed in that folder: noted, then
-        // opened as any other way does (the kits section resets with it).
-        Intent::NewWorkspaceInFolder(folder) => Some(open_in_folder(st, folder)),
+        Intent::NewWorkspaceInFolder(folder) => {
+            open_in_folder(st, m, folder);
+            Some(Task::none())
+        }
         Intent::OpenOverlay(Overlay::KitsDialog(ws)) | Intent::OpenKitsDialog(ws) => {
             st.kits = kits_dialog::KitsDialog::open(m, ws);
             Some(Task::none())
@@ -1343,28 +1378,25 @@ fn open_elsewhere(st: &mut State, m: &Model, ws: &str) -> Task<Message> {
 /// The dialog opens: the form starts clean, unless a clone is still running
 /// from when it was closed, which shows its progress again. (The kits section
 /// empties its own draft when the same intent reaches it.)
-///
-/// Opened from a folder, the workspace is filed there, and the account picker
-/// starts on the folder's account when it names one.
-fn opened(st: &mut State, m: &Model) {
-    let next = st.next_folder.take();
+fn opened(st: &mut State) {
     if !st.git.running {
         st.reset();
     }
-    if let Some(folder) = next.filter(|id| m.state().folders.iter().any(|f| f.id == *id)) {
-        st.folder.claude_account =
-            crate::state::folders::default_account(&m.state().folders, Some(&folder));
-        st.in_folder = Some(folder);
-    }
 }
 
-/// The form, for a workspace filed in `folder`: noted, then opened as any
-/// other way opens it.
-fn open_in_folder(st: &mut State, folder: &str) -> Task<Message> {
-    st.next_folder = Some(folder.to_string());
-    Task::done(Message::Intent(Intent::OpenOverlay(
-        Overlay::WorkspaceDialog,
-    )))
+/// The « + » of a navigator folder: the shell has opened the form as any
+/// other way does (`Intent::OpenOverlay`, so it is clean and the kits section
+/// too), and the workspace is filed in `folder`. A clone still running keeps
+/// the dialog as it was, its folder included: what the dialog says is where
+/// that clone goes. Nothing either when the dialog did not open (the Claude
+/// Code setup came first) or the folder is gone.
+fn open_in_folder(st: &mut State, m: &Model, folder: &str) {
+    if st.git.running || !on_top(m) {
+        return;
+    }
+    if m.state().folders.iter().any(|entry| entry.id == folder) {
+        st.in_folder = Some(folder.to_string());
+    }
 }
 
 /// Keeps the progress of the clone this dialog follows (the bus carries every

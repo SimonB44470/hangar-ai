@@ -477,8 +477,11 @@ fn activate_workspace(
         return intent(Intent::ActivateWorkspace(existing));
     }
     // A worktree is the same project on another branch: it opens with the
-    // agent and the shell of the workspace it was listed from, and is filed
-    // next to it, so a project's branches stay together.
+    // agent, the shell and the Claude account of the workspace it was listed
+    // from, and is filed next to it, so a project's branches stay together.
+    // The account its origin chose is its choice too; one its origin reads
+    // from their folder, it reads as well. (A node's workspace names an
+    // account of that machine, not of this one.)
     let origin = m.workspace(origin);
     let draft = WorkspaceDraft {
         name: label
@@ -494,6 +497,9 @@ fn activate_workspace(
         ],
         shell_id: origin.and_then(|ws| ws.shell_id.clone()),
         folder_id: origin.and_then(|ws| ws.folder_id.clone()),
+        claude_account: origin
+            .filter(|ws| !ws.is_hosted())
+            .and_then(|ws| ws.claude_account.clone()),
         ..WorkspaceDraft::default()
     };
     let made = m.apply(StoreAction::AddWorkspace(draft));
@@ -1112,3 +1118,66 @@ fn created(panel: &mut Panel, m: &mut Model, result: Result<Created, String>) ->
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod account_tests {
+    //! The Claude account of a worktree's workspace.
+
+    use hangar_engine::accounts::{AccountLevels, DEFAULT_CHOICE};
+
+    use super::*;
+    use crate::state::AppState;
+    use crate::state::types::{Pane, Workspace, WorkspaceFolder};
+
+    /// The workspace « w » filed in the folder « games » (on « perso »),
+    /// with `account` for its own.
+    fn model(account: Option<&str>) -> Model {
+        let mut m = Model::default();
+        m.hydrate(AppState {
+            folders: vec![WorkspaceFolder {
+                id: "games".into(),
+                name: "Games".into(),
+                claude_account: Some("perso".into()),
+                ..WorkspaceFolder::default()
+            }],
+            workspaces: vec![Workspace {
+                id: "w".into(),
+                name: "app".into(),
+                cwd: "/work/app".into(),
+                folder_id: Some("games".into()),
+                claude_account: account.map(str::to_string),
+                panes: vec![Pane {
+                    id: "p".into(),
+                    name: "Ava".into(),
+                    ..Pane::default()
+                }],
+                ..Workspace::default()
+            }],
+            active_workspace_id: Some("w".into()),
+            ..AppState::default()
+        });
+        m
+    }
+
+    #[test]
+    fn a_worktrees_workspace_runs_on_the_account_of_the_workspace_it_comes_from() {
+        for account in [None, Some("pro"), Some(DEFAULT_CHOICE)] {
+            let mut m = model(account);
+            let _ = activate_workspace(&mut m, "w", "/work/app-feat", None);
+            let made = m
+                .state()
+                .workspaces
+                .iter()
+                .find(|ws| ws.cwd == "/work/app-feat")
+                .expect("the worktree's workspace");
+            assert_eq!(made.folder_id.as_deref(), Some("games"));
+            assert_eq!(made.claude_account.as_deref(), account);
+            let origin = m.workspace("w").expect("its origin");
+            assert_eq!(
+                AccountLevels::of(m.state(), made, None),
+                AccountLevels::of(m.state(), origin, None),
+                "{account:?}"
+            );
+        }
+    }
+}

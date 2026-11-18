@@ -28,15 +28,28 @@ pub fn sidebar_order<'a>(
     loose.chain(filed).collect()
 }
 
-/// The account a workspace filed in `folder` starts on, if that folder names
-/// one: a workspace made there, or moved there without an account of its
-/// own. A folder that is gone, or that names none, gives nothing.
-pub fn default_account(folders: &[WorkspaceFolder], folder: Option<&str>) -> Option<String> {
-    let folder = folders
+/// The account `ws` inherits from the navigator folder it is filed in, as
+/// the folder names it (`accounts::AccountLevels`): nothing for a workspace
+/// at the top level, in a folder that is gone or that names none, or that
+/// its node runs (its account is chosen on that machine). Read, never
+/// copied: a workspace moved to another folder follows that one, unless it
+/// chose an account of its own.
+pub fn account_of<'a>(folders: &'a [WorkspaceFolder], ws: &Workspace) -> Option<&'a str> {
+    if ws.is_hosted() {
+        return None;
+    }
+    let folder = ws.folder_id.as_deref()?;
+    folders
         .iter()
-        .find(|entry| Some(entry.id.as_str()) == folder)?;
+        .find(|entry| entry.id == folder)
+        .and_then(folder_account)
+}
+
+/// The account a folder names for its workspaces, trimmed: none when it
+/// names none, or a blank one (`state.json` is hand-edited).
+pub fn folder_account(folder: &WorkspaceFolder) -> Option<&str> {
     let id = folder.claude_account.as_deref()?.trim();
-    (!id.is_empty()).then(|| id.to_string())
+    (!id.is_empty()).then_some(id)
 }
 
 /// Something with an id, for `place_before`.
@@ -159,20 +172,23 @@ mod tests {
     }
 
     #[test]
-    fn a_folders_default_account_is_its_own_trimmed_choice() {
+    fn a_workspace_inherits_its_folders_trimmed_account_unless_its_node_runs_it() {
         let mut games = folder("games");
         games.claude_account = Some(" perso ".into());
         let mut blank = folder("blank");
         blank.claude_account = Some("  ".into());
         let folders = [games, blank, folder("plain")];
-        assert_eq!(
-            default_account(&folders, Some("games")).as_deref(),
-            Some("perso")
-        );
-        assert_eq!(default_account(&folders, Some("blank")), None);
-        assert_eq!(default_account(&folders, Some("plain")), None);
-        assert_eq!(default_account(&folders, Some("gone")), None);
-        assert_eq!(default_account(&folders, None), None);
+        let filed = |folder: Option<&str>| ws("w", folder);
+        assert_eq!(account_of(&folders, &filed(Some("games"))), Some("perso"));
+        assert_eq!(account_of(&folders, &filed(Some("blank"))), None);
+        assert_eq!(account_of(&folders, &filed(Some("plain"))), None);
+        assert_eq!(account_of(&folders, &filed(Some("gone"))), None);
+        assert_eq!(account_of(&folders, &filed(None)), None);
+        let hosted = Workspace {
+            hosted: Some(true),
+            ..filed(Some("games"))
+        };
+        assert_eq!(account_of(&folders, &hosted), None);
     }
 
     #[test]

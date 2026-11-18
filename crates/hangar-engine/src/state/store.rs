@@ -14,7 +14,7 @@ use std::fmt;
 use std::sync::Arc;
 
 use super::Store;
-use super::folders::{self, place_before};
+use super::folders::place_before;
 use super::hosted;
 use super::layout::{
     MAX_PANES, arranged_tree, grid_order, grid_tree, insert_leaf, leaf, move_leaf,
@@ -661,10 +661,16 @@ fn reduce(model: &mut Store, action: StoreAction) -> StoreOutcome {
     match action {
         StoreAction::AddWorkspace(draft) => {
             let mut ws = make_workspace(&draft, all_pane_names(&model.state.workspaces));
-            // Made in a folder without a choice of its own: the folder's.
-            if ws.claude_account.is_none() {
-                ws.claude_account =
-                    folders::default_account(&model.state.folders, ws.folder_id.as_deref());
+            // Filed in a folder that is gone (removed while the dialog or a
+            // clone was on its way): at the top level, as a move does. Its
+            // account is not copied from the folder: it is read from it
+            // (`folders::account_of`), for as long as it is filed there.
+            if ws
+                .folder_id
+                .as_ref()
+                .is_some_and(|folder| !model.state.folders.iter().any(|entry| &entry.id == folder))
+            {
+                ws.folder_id = None;
             }
             outcome.workspace = Some(ws.id.clone());
             let state = model.state_mut();
@@ -774,20 +780,12 @@ fn reduce(model: &mut Store, action: StoreAction) -> StoreOutcome {
                 && before.as_deref() != Some(id.as_str())
             {
                 // A folder deleted while the workspace was on its way leaves it
-                // at the top level rather than filed under nothing.
-                let into = folder
+                // at the top level rather than filed under nothing. Only the
+                // filing changes: a workspace without an account of its own
+                // follows its new folder's by reading it, and one its node
+                // runs is told nothing (`folder_id` is the mirror's own).
+                ws.folder_id = folder
                     .filter(|folder| model.state.folders.iter().any(|entry| &entry.id == folder));
-                // Moved into another folder without an account of its own: it
-                // takes the folder's. A choice it already has is never
-                // replaced, and leaving a folder keeps what it runs on.
-                if into != ws.folder_id
-                    && account_choice(ws.claude_account.as_deref()).is_none()
-                    && let Some(account) =
-                        folders::default_account(&model.state.folders, into.as_deref())
-                {
-                    ws.claude_account = Some(account);
-                }
-                ws.folder_id = into;
                 let mut workspaces = model.state.workspaces.clone();
                 place_before(&mut workspaces, ws, before.as_deref());
                 if workspaces != model.state.workspaces {

@@ -14,13 +14,14 @@
 use hangar_core::git_clone::{git_clone, git_clone_discard, git_repo_ownership};
 use iced::Task;
 
-use crate::accounts;
+use hangar_engine::accounts::{AccountLevels, MAIN_ACCOUNT};
+
 use crate::message::{Intent, Message};
 use crate::services::Services;
 use crate::services::inbox::Answer;
 use crate::state::roles::orchestrator_of;
 use crate::state::types::PaneRole;
-use crate::state::{AgentId, Model, Pane, Patch, StoreAction, WorkspaceDraft};
+use crate::state::{AgentId, AppState, Model, Pane, Patch, StoreAction, Workspace, WorkspaceDraft};
 
 use super::Msg;
 use super::clone::{
@@ -38,7 +39,8 @@ pub struct AppDeps {
     parent: Option<String>,
     /// The job the dialog follows and cancels.
     job_id: Option<String>,
-    /// The navigator folder the dialog was opened from.
+    /// The navigator folder the dialog was opened from: the workspace is
+    /// filed there, and runs on its account.
     folder: Option<String>,
 }
 
@@ -70,8 +72,8 @@ impl AppDeps {
         self
     }
 
-    /// The new workspace is filed in this navigator folder, and so starts on
-    /// the folder's account when it has one.
+    /// The new workspace is filed in this navigator folder, and so runs on
+    /// the folder's account when it names one.
     pub fn file_in(mut self, folder: Option<String>) -> AppDeps {
         self.folder = folder;
         self
@@ -167,11 +169,9 @@ impl FromGitDeps for AppDeps {
         }
     }
 
-    async fn create_workspace(&self, mut draft: NewWorkspace) -> Result<Created, String> {
-        if draft.folder_id.is_none() {
-            draft.folder_id = self.folder.clone();
-        }
-        self.ask(|answer| Msg::Create(draft, answer)).await
+    async fn create_workspace(&self, draft: NewWorkspace) -> Result<Created, String> {
+        let folder = self.folder.clone();
+        self.ask(|answer| Msg::Create(draft, folder, answer)).await
     }
 
     async fn remove_workspace(&self, id: &str) -> Result<(), String> {
@@ -185,20 +185,14 @@ impl FromGitDeps for AppDeps {
         !hangar_core::paths::Paths::isolated()
     }
 
-    // The account the new workspace's panes will start on: nothing is chosen
-    // for it yet, so the settings' default, as `launch_account` decides.
+    // The account the new workspace's panes will start on: the trust is
+    // that account's (each keeps its own `.claude.json`).
     async fn trust_folder(&self, path: &str) -> Result<(), String> {
-        let default = self
-            .services
-            .snapshot()
-            .state
-            .settings
-            .claude_account
-            .clone();
+        let levels = new_workspace_levels(&self.services.snapshot().state, self.folder.as_deref());
         let path = path.to_string();
         tokio::task::spawn_blocking(move || {
-            let account = accounts::launch_account(default.as_deref(), None, None);
-            let account = (account.id != accounts::MAIN_ACCOUNT).then_some(account.id);
+            let account = levels.launch();
+            let account = (account.id != MAIN_ACCOUNT).then_some(account.id);
             hangar_core::mcp_scope::claude_trust_folder(path, account).map(|_| ())
         })
         .await
@@ -225,11 +219,27 @@ impl FromGitDeps for AppDeps {
     }
 }
 
+/// The levels the panes of the workspace the flow makes resolve their account
+/// in: it chooses none of its own, so the account of the folder it is filed
+/// in (`folder`, when it still exists), then the settings' default. The same
+/// rule as for any workspace (`AccountLevels::of`), for one not made yet.
+fn new_workspace_levels(state: &AppState, folder: Option<&str>) -> AccountLevels {
+    let filed = Workspace {
+        folder_id: folder.map(str::to_string),
+        ..Workspace::default()
+    };
+    AccountLevels::of(state, &filed, None)
+}
+
 // ── on the UI thread: what the flow asked of the model ────────────────
 
 /// The workspace with a single Claude Code pane, which is its orchestrator
 /// from the start, so that it launches with Hangar's server.
-pub(super) fn create_workspace(m: &mut Model, draft: NewWorkspace) -> Result<Created, String> {
+pub(super) fn create_workspace(
+    m: &mut Model,
+    draft: NewWorkspace,
+    folder: Option<String>,
+) -> Result<Created, String> {
     let before = m.state().active_workspace_id.clone();
     let made = m.apply(StoreAction::AddWorkspace(WorkspaceDraft {
         name: draft.name,
@@ -237,7 +247,7 @@ pub(super) fn create_workspace(m: &mut Model, draft: NewWorkspace) -> Result<Cre
         layout: 1,
         agents: vec![AgentId::Claude],
         shell_id: None,
-        folder_id: draft.folder_id,
+        folder_id: folder,
         ..WorkspaceDraft::default()
     }));
     let unmade = || "Hangar could not create the workspace.".to_string();
@@ -315,4 +325,80 @@ pub(super) fn run_request(
         async move { super::flow::run(&request, &deps).await },
         |outcome| Message::GitFlow(Msg::Finished(outcome)),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use hangar_engine::accounts::ClaudeAccount;
+
+    use super::*;
+    use crate::state::types::WorkspaceFolder;
+
+    /// A model with a folder « games » on `account`, and « pro » for default.
+    fn model_with_games(account: Option<&str>) -> Model {
+        let mut m = Model::default();
+        let mut state = AppState::default();
+        state.folders = vec![WorkspaceFolder {
+            id: "games".into(),
+            name: "Games".into(),
+            claude_account: account.map(str::to_string),
+            ..WorkspaceFolder::default()
+        }];
+        state.settings.claude_account = Some("pro".into());
+        m.hydrate(state);
+        m
+    }
+
+    fn accounts() -> Result<Vec<ClaudeAccount>, String> {
+        Ok(["main", "perso", "pro"]
+            .into_iter()
+            .map(|id| ClaudeAccount {
+                id: id.into(),
+                label: id.into(),
+                is_main: id == "main",
+                logged_in: true,
+                email: None,
+                plan: None,
+            })
+            .collect())
+    }
+
+    fn shop() -> NewWorkspace {
+        NewWorkspace {
+            name: "shop".into(),
+            cwd: "/dev/shop".into(),
+            activate: true,
+        }
+    }
+
+    #[test]
+    fn a_clone_filed_in_a_folder_is_trusted_for_the_folders_account() {
+        let m = model_with_games(Some("perso"));
+        let levels = new_workspace_levels(m.state(), Some("games"));
+        assert_eq!(levels.folder.as_deref(), Some("perso"));
+        assert_eq!(levels.launch_with(accounts).id, "perso");
+        // Filed nowhere, in a folder since removed, or in one that names no
+        // account: the settings' default.
+        for folder in [None, Some("gone")] {
+            let levels = new_workspace_levels(m.state(), folder);
+            assert_eq!(levels.launch_with(accounts).id, "pro", "{folder:?}");
+        }
+        let plain = model_with_games(None);
+        let levels = new_workspace_levels(plain.state(), Some("games"));
+        assert_eq!(levels.launch_with(accounts).id, "pro");
+    }
+
+    #[test]
+    fn the_flows_workspace_is_filed_in_its_folder_and_runs_on_the_account_trusted() {
+        let mut m = model_with_games(Some("perso"));
+        let trusted = new_workspace_levels(m.state(), Some("games"));
+        let created = create_workspace(&mut m, shop(), Some("games".into())).unwrap();
+        let ws = m.workspace(&created.workspace.id).unwrap();
+        assert_eq!(ws.folder_id.as_deref(), Some("games"));
+        assert_eq!(ws.claude_account, None, "read from the folder, not copied");
+        assert_eq!(AccountLevels::of(m.state(), ws, None), trusted);
+        // A folder removed while the clone ran files it nowhere.
+        let created = create_workspace(&mut m, shop(), Some("gone".into())).unwrap();
+        assert_eq!(m.workspace(&created.workspace.id).unwrap().folder_id, None);
+    }
 }

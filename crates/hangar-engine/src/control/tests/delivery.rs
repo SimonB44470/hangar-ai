@@ -164,6 +164,37 @@ async fn reviews_on_the_workspaces_claude_account_and_on_nothing_when_it_is_the_
 }
 
 #[tokio::test]
+async fn reviews_on_the_account_of_the_workspaces_folder_unless_it_chose_one() {
+    let s = setup();
+    s.now(Kind::Conflict, "conflict", |_| {});
+    lock(&s.fake.state).folders = vec![crate::state::types::WorkspaceFolder {
+        id: "games".into(),
+        name: "Games".into(),
+        claude_account: Some("work".into()),
+        ..Default::default()
+    }];
+    // Nothing of its own: the folder's. « Default » chosen, or main: the
+    // settings' default (main), over the folder's.
+    for (account, expected) in [
+        (None, Some("work")),
+        (Some(crate::accounts::DEFAULT_CHOICE), None),
+        (Some("main"), None),
+    ] {
+        s.fake.patch("w1", |ws| {
+            ws.folder_id = Some("games".into());
+            ws.claude_account = account.map(str::to_string);
+        });
+        s.submit(json!({})).await.unwrap();
+        s.fake.settle().await;
+        assert_eq!(
+            s.runs().last().unwrap().claude_account.as_deref(),
+            expected,
+            "{account:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn asks_for_the_accounts_only_when_a_level_names_one_other_than_main() {
     let s = setup();
     s.now(Kind::Conflict, "conflict", |_| {});

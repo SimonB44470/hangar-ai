@@ -249,10 +249,13 @@ pub fn dialog<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
 
     let mut panel = dialog::dialog(t, ctx.t(Key::CreateTitle), form);
     // Opened from a navigator folder: the workspace is filed there.
-    if let Some(name) = st.target_folder(ctx.model) {
+    if let Some(folder) = st.target_folder(ctx.model) {
         panel = panel.subtitle(
             ctx.i18n
-                .t_with(Key::CreateInFolder, &args!("folder" => name))
+                .t_with(
+                    Key::CreateInFolder,
+                    &args!("folder" => folder.name.as_str()),
+                )
                 .into_owned(),
         );
     }
@@ -873,7 +876,7 @@ fn more_options<'a>(
         form = form.push(labelled(
             ctx,
             Some(ctx.t(Key::AccountsPickerLabel).into_owned()),
-            accounts::workspace_picker(ctx, st.folder.claude_account.as_deref()),
+            accounts::workspace_picker(ctx, st.shown_account(ctx.model)),
         ));
     }
 

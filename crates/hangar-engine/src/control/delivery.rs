@@ -33,11 +33,11 @@ use hangar_core::board::{Task, TaskPatch};
 use hangar_core::delivery::{Cleanup, Delivery, Kind, Outcome, Plan, TaskBrief, Tested};
 use hangar_core::shells::ShellInfo;
 
-use crate::accounts::{MAIN_ACCOUNT, launch_account_with};
+use crate::accounts::{AccountLevels, MAIN_ACCOUNT};
 use crate::orchestration::heard;
 use crate::state::roles::{NEEDS_YOU_LABEL, READY_TO_LAND_LABEL, orchestration_of, workers_of};
 use crate::state::types::PaneRole;
-use crate::state::{Pane, Settings, Workspace, WsId};
+use crate::state::{AppState, Pane, Workspace, WsId};
 
 use super::delivery_text::{
     AS_TESTED, FAILED, HANGAR, OUTSIDE, REVIEW_STOPPED, SUMMARY, USAGE_LIMIT, check_line,
@@ -439,38 +439,29 @@ async fn delivered_from(
 
 /// The Claude account the review spends: the one a pane of this workspace
 /// would start on (`launchAccount`), by P8's rule
-/// (`accounts::launch_account_with`): pane over workspace over
-/// settings over main, an account that no longer exists skipped.
+/// (`accounts::AccountLevels::launch_with`): pane over workspace over its
+/// folder over settings over main, an account that no longer exists skipped.
 ///
 /// P8's rule asks for the list synchronously, and only when a level names an
 /// account other than main; the deliveries' list is async. So the rule is
 /// asked once without the list, and again with it only if it wanted it.
 async fn launch_account(
-    settings: &Settings,
+    state: &AppState,
     ws: &Workspace,
     pane: Option<&Pane>,
     delivery: &dyn DeliveryDeps,
 ) -> String {
-    let (default, workspace, pane) = (
-        settings.claude_account.as_deref(),
-        ws.claude_account.as_deref(),
-        pane.and_then(|pane| pane.claude_account.as_deref()),
-    );
+    let levels = AccountLevels::of(state, ws, pane);
     let mut wanted = false;
-    let without = launch_account_with(
-        || {
-            wanted = true;
-            Ok(Vec::new())
-        },
-        default,
-        workspace,
-        pane,
-    );
+    let without = levels.launch_with(|| {
+        wanted = true;
+        Ok(Vec::new())
+    });
     if !wanted {
         return without.id;
     }
     let accounts = delivery.accounts().await;
-    launch_account_with(move || accounts, default, workspace, pane).id
+    levels.launch_with(move || accounts).id
 }
 
 /// The first of `preferred` that is detected, else the first shell detected
@@ -864,7 +855,7 @@ async fn deliver(
     let settings = orchestration_of(ws);
     let snapshot = port.snapshot();
     // The review spends the account a pane of this workspace would start on.
-    let account = launch_account(&snapshot.state.settings, ws, None, delivery).await;
+    let account = launch_account(&snapshot.state, ws, None, delivery).await;
     let shells = delivery.shells();
     let request = Delivery {
         workspace: ws.cwd.clone(),

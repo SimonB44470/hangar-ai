@@ -662,7 +662,10 @@ fn workspace_row<'a>(f: &Frame<'a>, ws: &'a Workspace) -> Element<'a, Message> {
             } else if let Some(words) = repos::also_on(model, tr, ws) {
                 end = end.push(mark_in(t, Icon::Machines, t.colors.fg_subtle, words));
             }
-            if ws.claude_account.is_some() {
+            // Its own account, or the one it reads from its folder.
+            if ws.claude_account.is_some()
+                || crate::state::folders::account_of(&model.state().folders, ws).is_some()
+            {
                 end = end.push(crate::accounts::badge(f.ctx, &ws.id));
             }
             if let Some(orchestrator) = orchestrator_of(ws) {

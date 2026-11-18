@@ -183,8 +183,9 @@ pub enum Intent {
         file: Option<String>,
     },
     OpenWorktrees(WsId),
-    /// The new-workspace form, with the workspace filed in this navigator
-    /// folder and starting on the folder's account, if it has one.
+    /// The new-workspace form, for a workspace filed in this navigator
+    /// folder (and so running on the folder's account, when it names one):
+    /// the shell opens the form, the dialog's package files it.
     NewWorkspaceInFolder(String),
     OpenKitsDialog(WsId),
     /// The new-workspace dialog, ready to clone the repository of this

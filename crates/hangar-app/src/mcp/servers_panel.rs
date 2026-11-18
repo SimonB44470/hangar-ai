@@ -9,6 +9,7 @@ use iced::widget::{column, container, row, rule, space, text};
 use iced::{Alignment, Element, Length, Padding, Task};
 
 use hangar_core::mcp_scope::{self, Discovery, ServerInfo, Status};
+use hangar_engine::accounts::{AccountLevels, MAIN_ACCOUNT};
 use hangar_i18n::{Key, args};
 use hangar_theme::{fonts, style, tokens};
 use hangar_ui::badge::{self, Tone};
@@ -66,13 +67,19 @@ pub fn open(st: &mut State, m: &Model, ws_id: &str) -> Task<Message> {
         ws: ws.id.clone(),
         found: Found::Loading,
     });
-    let (id, cwd, account) = (ws.id.clone(), ws.cwd.clone(), ws.claude_account.clone());
+    // The account its Claude Code panes start on: its own, its folder's or
+    // the default, as a launch resolves it.
+    let levels = AccountLevels::of(m.state(), ws, None);
+    let (id, cwd) = (ws.id.clone(), ws.cwd.clone());
     Task::perform(
         async move {
             let at = id.clone();
-            let found = tokio::task::spawn_blocking(move || mcp_scope::mcp_servers(cwd, account))
-                .await
-                .map_err(|error| error.to_string());
+            let found = tokio::task::spawn_blocking(move || {
+                let account = levels.launch().id;
+                mcp_scope::mcp_servers(cwd, (account != MAIN_ACCOUNT).then_some(account))
+            })
+            .await
+            .map_err(|error| error.to_string());
             ServersMsg::Found(at, found)
         },
         |message| Message::Mcp(Msg::Servers(message)),

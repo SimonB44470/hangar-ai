@@ -54,8 +54,13 @@ pub enum Msg {
     /// The app has started: the trace of the consent answers gets its log.
     Started,
     /// The flow, running on tokio, asks for its workspace (the model is the
-    /// UI thread's alone).
-    Create(NewWorkspace, Answer<Result<Created, String>>),
+    /// UI thread's alone), filed in the navigator folder its dialog was
+    /// opened from, if any (`AppDeps::file_in`).
+    Create(
+        NewWorkspace,
+        Option<String>,
+        Answer<Result<Created, String>>,
+    ),
     /// The flow takes back the workspace it made.
     Remove(String, Answer<Result<(), String>>),
     /// The flow mounts the terminals of the workspace it made.
@@ -72,8 +77,8 @@ pub fn update(_st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<M
             }
             Task::none()
         }
-        Msg::Create(draft, answer) => {
-            answer.send(deps::create_workspace(m, draft));
+        Msg::Create(draft, folder, answer) => {
+            answer.send(deps::create_workspace(m, draft, folder));
             Task::none()
         }
         Msg::Remove(id, answer) => {

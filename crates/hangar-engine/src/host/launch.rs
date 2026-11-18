@@ -3,11 +3,11 @@
 //! mounts (`panes/controller.rs`), with no terminal to measure.
 //!
 //! A Claude Code pane gets the hangar-bridge mod (the settings'
-//! `claude_bridge`), the account its pane, workspace or settings chose, its
-//! session resumed when its transcript is there, and, for a workspace that
-//! chose its MCP servers or a pane with a role, the `--mcp-config` file
-//! core writes (`mcp_scope_write`), named by the variable the shell is
-//! handed. An orchestrator's or a worker's pane starts with the
+//! `claude_bridge`), the account its pane, workspace, folder or settings
+//! chose, its session resumed when its transcript is there, and, for a
+//! workspace that chose its MCP servers or a pane with a role, the
+//! `--mcp-config` file core writes (`mcp_scope_write`), named by the
+//! variable the shell is handed. An orchestrator's or a worker's pane starts with the
 //! orchestration's permission mode and Hangar's tools let through.
 
 use std::sync::Arc;
@@ -54,17 +54,14 @@ struct Prepared {
 /// Off tokio's async threads: the accounts, the MCP scope and the
 /// transcripts are files.
 fn prepare(host: &EngineHost, ws: &Workspace, pane: &Pane) -> Prepared {
-    let settings = host.snapshot().state.settings.clone();
+    let snapshot = host.snapshot();
     let cwd = folder_of(ws, pane);
     let claude = pane.agent == AgentId::Claude;
     let login = claude && pane.login == Some(true);
     let account = claude.then(|| {
-        crate::accounts::launch_account(
-            settings.claude_account.as_deref(),
-            ws.claude_account.as_deref(),
-            pane.claude_account.as_deref(),
-        )
-        .id
+        crate::accounts::AccountLevels::of(&snapshot.state, ws, Some(pane))
+            .launch()
+            .id
     });
     let custom = ws
         .mcp
@@ -101,7 +98,7 @@ fn prepare(host: &EngineHost, ws: &Workspace, pane: &Pane) -> Prepared {
             cwd,
             name: pane.name.clone(),
             agent: pane.agent.as_str().to_string(),
-            bridge: settings.claude_bridge,
+            bridge: snapshot.state.settings.claude_bridge,
             port_base: pane.port_base.and_then(|port| u16::try_from(port).ok()),
             build_env,
             mcp_config: scope.as_ref().map(|(path, _)| path.clone()),

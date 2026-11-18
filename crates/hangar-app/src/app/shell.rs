@@ -44,6 +44,12 @@ impl App {
             Intent::OpenWorktrees(ws) => self.open_overlay(Overlay::Worktrees(ws)),
             Intent::OpenKitsDialog(ws) => self.open_overlay(Overlay::KitsDialog(ws)),
             Intent::OpenOnAnotherMachine(_) => self.open_overlay(Overlay::WorkspaceDialog),
+            // The form opened as any other way opens it (clean, the kits
+            // section too, the Claude Code setup first when it is needed);
+            // the dialog's package then files the workspace in the folder.
+            Intent::NewWorkspaceInFolder(_) => {
+                return self.intent(Intent::OpenOverlay(Overlay::WorkspaceDialog));
+            }
             Intent::OpenDiff { ws, pane } => self.open_overlay(Overlay::Diff { ws, pane }),
             Intent::OpenChanges { ws, .. } => self.open_overlay(Overlay::Diff { ws, pane: None }),
             Intent::OpenSessions { ws, pane } => {

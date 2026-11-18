@@ -2,18 +2,23 @@
 //! (`components/accounts/accountMenuItems.ts` and `PaneAccountItems.tsx`):
 //! « Default (Perso) » first, then one entry per account, the current choice
 //! checked. They sit at the end of the navigator's workspace menu and of a
-//! pane's « … » menu, which draw them as they draw their own lines.
+//! pane's « … » menu, which draw them as they draw their own lines. A
+//! workspace filed in a folder that names an account gets « Folder default
+//! (Pro) » first: what it runs on without a choice of its own. A navigator
+//! folder's menu has the same lines, for the account of its workspaces.
 
+use hangar_engine::accounts::{AccountLevels, DEFAULT_CHOICE};
 use hangar_i18n::{Key, Translator};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
 use crate::shell::MenuEntry;
+use crate::state::folders;
 use crate::state::types::AgentId;
 use crate::state::{PaneId, WsId};
 
 use super::model::{ClaudeAccount, read_account_choice};
-use super::switch::default_label;
+use super::switch::{account_name, default_label};
 use super::{Msg, live};
 
 /// One line, as plain data: what it says, whether it is the current choice,
@@ -56,6 +61,46 @@ pub fn account_menu_items(
     items
 }
 
+/// The lines of a workspace's menu. `folder` is the account the workspace
+/// reads from its folder, when that folder names one that exists: « Folder
+/// default (Pro) » comes first and stands for no choice of its own, and
+/// « Default (Perso) » becomes a choice, the person's default over the
+/// folder's (`DEFAULT_CHOICE`). Without it, [`account_menu_items`].
+pub fn workspace_menu_items(
+    t: Translator,
+    accounts: &[ClaudeAccount],
+    default: Option<&str>,
+    folder: Option<&str>,
+    value: Option<&str>,
+) -> Vec<AccountMenuItem> {
+    let mut items = account_menu_items(t, accounts, default, value);
+    let Some(folder) = folder else {
+        return items;
+    };
+    let own = read_account_choice(value);
+    let chose_default = own.as_deref() == Some(DEFAULT_CHOICE);
+    let known_own = own.filter(|own| accounts.iter().any(|account| account.id == *own));
+    if let Some(chosen) = items.first_mut() {
+        chosen.checked = chose_default;
+        chosen.select = Some(DEFAULT_CHOICE.to_string());
+    }
+    let unknown = t.t(Key::AccountsPickerUnknown);
+    items.insert(
+        0,
+        AccountMenuItem {
+            key: "folder".into(),
+            // TODO(PR #20, phase 2): its own key, in English and French.
+            label: format!(
+                "Folder default ({})",
+                account_name(accounts, Some(folder), &unknown)
+            ),
+            checked: known_own.is_none() && !chose_default,
+            select: None,
+        },
+    );
+    items
+}
+
 fn radio(item: AccountMenuItem, pick: impl Fn(Option<String>) -> Message) -> MenuEntry {
     MenuEntry::Item {
         label: item.label,
@@ -67,10 +112,11 @@ fn radio(item: AccountMenuItem, pick: impl Fn(Option<String>) -> Message) -> Men
     }
 }
 
-/// The account lines of a navigator folder's menu: « None » first (its new
+/// The account lines of a navigator folder's menu: « None » first (its
 /// workspaces follow the default), then one per account, the folder's choice
-/// checked. Nothing before the accounts are known, nor with a single account,
-/// where there is nothing to choose.
+/// checked. The workspaces filed in it that chose no account of their
+/// own run on it, those moved in later too. Nothing before the accounts are
+/// known, nor with a single account, where there is nothing to choose.
 pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
     let Some(accounts) = live(ctx).accounts.as_deref().filter(|all| all.len() > 1) else {
         return Vec::new();
@@ -84,7 +130,7 @@ pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
     else {
         return Vec::new();
     };
-    let own = read_account_choice(entry.claude_account.as_deref())
+    let own = folders::folder_account(entry)
         .filter(|own| accounts.iter().any(|account| account.id == *own));
     let pick = |id: Option<String>| {
         Message::Accounts(Msg::SetFolder {
@@ -98,6 +144,8 @@ pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
         radio(
             AccountMenuItem {
                 key: "none".into(),
+                // TODO(PR #20, phase 2): « Default (Perso) » (`default_label`),
+                // as the other menus say it, and a clearer heading.
                 label: ctx.t(Key::AccountsMenuFolderNone).into_owned(),
                 checked: own.is_none(),
                 select: None,
@@ -110,7 +158,7 @@ pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
             AccountMenuItem {
                 key: account.id.clone(),
                 label: account.label.clone(),
-                checked: own.as_deref() == Some(account.id.as_str()),
+                checked: own == Some(account.id.as_str()),
                 select: Some(account.id.clone()),
             },
             pick,
@@ -133,11 +181,15 @@ pub fn menu_entries(ctx: Ctx<'_>, ws: &WsId, pane: Option<&PaneId>) -> Vec<MenuE
     let settings = ctx.model.settings().claude_account.as_deref();
     match pane {
         None => {
-            // The same as the toolbar's click: this workspace's own account.
-            let items = account_menu_items(
+            // The same as the toolbar's click: this workspace's own account,
+            // or its folder's.
+            let folder = folders::account_of(&ctx.model.state().folders, workspace)
+                .filter(|id| accounts.iter().any(|account| account.id == *id));
+            let items = workspace_menu_items(
                 ctx.i18n,
                 accounts,
                 settings,
+                folder,
                 workspace.claude_account.as_deref(),
             );
             let mut entries = vec![
@@ -163,10 +215,17 @@ pub fn menu_entries(ctx: Ctx<'_>, ws: &WsId, pane: Option<&PaneId>) -> Vec<MenuE
                 return Vec::new();
             }
             // « Default » here means the pane follows its workspace, so the
-            // label names the account the workspace is on.
-            let follows = workspace.claude_account.as_deref().or(settings);
-            let items =
-                account_menu_items(ctx.i18n, accounts, follows, pane.claude_account.as_deref());
+            // label names the account the workspace is on: its own, its
+            // folder's or the default.
+            let follows = AccountLevels::of(ctx.model.state(), workspace, None)
+                .resolve(accounts)
+                .id;
+            let items = account_menu_items(
+                ctx.i18n,
+                accounts,
+                Some(&follows),
+                pane.claude_account.as_deref(),
+            );
             let mut entries = vec![
                 MenuEntry::Separator,
                 MenuEntry::Heading(ctx.t(Key::AccountsPaneMenuHeading).into_owned()),
@@ -249,6 +308,45 @@ mod tests {
         let items = account_menu_items(T, &accounts(), None, Some("gone"));
         assert!(items[0].checked);
         assert!(items.iter().all(|item| !item.label.contains('@')));
+    }
+
+    fn shown(items: &[AccountMenuItem]) -> Vec<(&str, bool, Option<&str>)> {
+        items
+            .iter()
+            .map(|item| (item.label.as_str(), item.checked, item.select.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn in_a_folder_with_an_account_the_folders_line_is_no_choice_and_default_one() {
+        let items = workspace_menu_items(T, &accounts(), Some("main"), Some("perso"), None);
+        assert_eq!(
+            shown(&items),
+            [
+                ("Folder default (Perso)", true, None),
+                ("Default (Principal)", false, Some(DEFAULT_CHOICE)),
+                ("Principal", false, Some("main")),
+                ("Perso", false, Some("perso")),
+            ]
+        );
+        let checked = |value| -> Vec<bool> {
+            workspace_menu_items(T, &accounts(), Some("main"), Some("perso"), value)
+                .iter()
+                .map(|item| item.checked)
+                .collect()
+        };
+        assert_eq!(checked(Some(DEFAULT_CHOICE)), [false, true, false, false]);
+        assert_eq!(checked(Some("perso")), [false, false, false, true]);
+        // An account that is gone: the folder's applies.
+        assert_eq!(checked(Some("gone")), [true, false, false, false]);
+    }
+
+    #[test]
+    fn outside_such_a_folder_the_workspaces_lines_are_the_usual_ones() {
+        assert_eq!(
+            workspace_menu_items(T, &accounts(), Some("perso"), None, None),
+            account_menu_items(T, &accounts(), Some("perso"), None)
+        );
     }
 
     #[test]
