@@ -7,14 +7,18 @@
 #![allow(clippy::field_reassign_with_default)]
 
 use hangar_i18n::Locale;
+use hangar_theme::tokens::{font_size, space};
+use hangar_ui::badge::icon_side;
 use iced::widget::container;
 use iced::{Alignment, Element, Length};
 use serde_json::json;
 
 use crate::message::Message;
 use crate::shell::MenuEntry;
+use crate::state::{AccountStyle, AccountTone};
 use crate::workspace_dialog::testing::{Harness, messages};
 
+use super::account_style::{self, Mark};
 use super::settings_page::Page;
 use super::switch::{AccountUsage, WindowUsage};
 use super::switcher::{Menu, SwitchScope};
@@ -1233,4 +1237,184 @@ fn a_pane_on_a_node_is_not_restarted_by_a_switch() {
     );
     h.model.live.accounts.launched.note("p1", Some("main"));
     assert_eq!(running_in(&h.model, &ws("w1"), SwitchScope::Workspace), 1);
+}
+
+// ── the badges' styles ─────────────────────────────────────────────────
+
+/// Coloured badges on: the main account amber with the bolt, « Perso » green
+/// with the gamepad, « Travail » plain.
+fn styled(h: Harness) -> Harness {
+    h.edit(|state| {
+        let settings = &mut state.settings;
+        settings.account_badges = true;
+        settings.set_account_tone("main", Some(AccountTone::Warning));
+        settings.set_account_icon("main", Some("bolt"));
+        settings.set_account_tone("perso", Some(AccountTone::Success));
+        settings.set_account_icon("perso", Some("gamepad"));
+    })
+}
+
+/// Where the name `text` starts in `ui`.
+fn x_of(ui: &mut iced_test::Simulator<'_, Message>, text: &str) -> f32 {
+    ui.find(text).expect("the name is drawn").bounds().x
+}
+
+/// How much further right a name starts in a badge of a tone with an icon
+/// than as a plain word: the capsule's side padding, the icon and the gap
+/// after it. A badge with no tone has no capsule, one with no icon no icon.
+fn badge_shift(size: f32) -> f32 {
+    space::SM + icon_side(size) + space::XS
+}
+
+#[test]
+fn a_styled_account_wears_its_badge_in_the_navigator() {
+    let own = ws("w2");
+    let plain = Harness::new(Locale::En, "graphite");
+    let plain = x_of(&mut plain.show(badge(plain.ctx(), &own)), "Perso");
+
+    let h = styled(Harness::new(Locale::En, "graphite"));
+    assert_eq!(
+        account_style::of(h.ctx(), "perso"),
+        Mark {
+            tone: Some(AccountTone::Success),
+            icon: Some(hangar_ui::Icon::Gamepad),
+        }
+    );
+    let mut ui = h.show(badge(h.ctx(), &own));
+    let shift = x_of(&mut ui, "Perso") - plain;
+    assert!(
+        (shift - badge_shift(font_size::MICRO)).abs() < 0.5,
+        "the name moved {shift}: it is not in its badge"
+    );
+    h.shot(&mut ui, "accounts-badge-styled-en-graphite");
+}
+
+#[test]
+fn a_styled_account_wears_its_badge_in_the_menu() {
+    let mut st = State::default();
+    st.switcher = Menu::Open;
+    let plain = Harness::new(Locale::En, "graphite");
+    let mut ui = plain.show(toolbar(switcher(&st, plain.ctx())));
+    let (perso, travail) = (x_of(&mut ui, "Perso"), x_of(&mut ui, "Travail"));
+    drop(ui);
+
+    let h = styled(Harness::new(Locale::En, "graphite"));
+    let mut ui = h.show(toolbar(switcher(&st, h.ctx())));
+    let shift = x_of(&mut ui, "Perso") - perso;
+    assert!(
+        (shift - badge_shift(font_size::BODY)).abs() < 0.5,
+        "the name moved {shift}: it is not in its badge"
+    );
+    // An account with no style keeps its plain name, where it was.
+    assert!((x_of(&mut ui, "Travail") - travail).abs() < 0.5);
+    // Not logged in says so on the line under the name.
+    assert!(ui.find("not logged in").is_ok());
+    h.shot(&mut ui, "accounts-switcher-styled-en-graphite");
+}
+
+#[test]
+fn the_page_offers_a_tone_and_an_icon_and_a_choice_is_kept() {
+    let mut h = Harness::new(Locale::En, "graphite");
+    let st = State::default();
+    let mut page = Page::default();
+    let t = hangar_i18n::Translator::new(Locale::En);
+    // The switch's own label is drawn by iced's toggler, which no search
+    // finds: its hint, right under it, stands for it.
+    let switch = t.t(hangar_i18n::Key::AccountsSettingsBadgesHint);
+    let editor = t.t(hangar_i18n::Key::AccountsSettingsBadge);
+    {
+        // Off by default: the page offers the switch, not the choices.
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        assert!(ui.find(switch.as_ref()).is_ok());
+        assert!(ui.find(editor.as_ref()).is_err());
+    }
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetBadges(true));
+    assert!(h.model.settings().account_badges);
+    {
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        assert!(ui.find(editor.as_ref()).is_ok());
+        assert!(ui.find("No icon").is_ok());
+        h.shot(&mut ui, "accounts-page-badges-en-graphite");
+    }
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::SetTone("perso".into(), Some(AccountTone::Success)),
+    );
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::SetIcon("perso".into(), Some(hangar_ui::Icon::Gamepad)),
+    );
+    assert_eq!(
+        h.model.settings().account_style("perso"),
+        AccountStyle {
+            tone: Some(AccountTone::Success),
+            icon: Some("gamepad".into()),
+        }
+    );
+    {
+        let mut ui = h.show(settings_page(&st, h.ctx()));
+        h.shot(&mut ui, "accounts-page-badges-chosen-en-graphite");
+    }
+
+    // Taking both back leaves nothing in the file.
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetTone("perso".into(), None));
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::SetIcon("perso".into(), None));
+    assert!(h.model.settings().account_styles.is_empty());
+}
+
+#[test]
+fn with_badges_off_every_account_keeps_its_plain_label() {
+    let h = styled(Harness::new(Locale::En, "graphite")).edit(|state| {
+        state.settings.account_badges = false;
+    });
+    // The choices stay kept for when the badges are turned on again...
+    assert!(h.model.settings().account_styles.contains_key("perso"));
+    // ...but nothing draws them while they are off.
+    assert!(!account_style::shown(h.ctx()));
+    assert!(account_style::of(h.ctx(), "perso").is_plain());
+    assert!(account_style::of(h.ctx(), "main").is_plain());
+}
+
+/// With a single account no badge is drawn, so the switch is not offered,
+/// and a style chosen before the others went shows nowhere, the toolbar
+/// included, rather than stay on with no switch to turn it off.
+#[test]
+fn a_single_account_is_offered_no_badge() {
+    let mut h = styled(Harness::new(Locale::En, "graphite"));
+    h.model.live.accounts.accounts = h
+        .model
+        .live
+        .accounts
+        .accounts
+        .take()
+        .map(|all| all.into_iter().filter(|account| account.is_main).collect());
+    assert!(!account_style::shown(h.ctx()));
+    assert!(account_style::of(h.ctx(), "main").is_plain());
+    let t = hangar_i18n::Translator::new(Locale::En);
+    let switch = t.t(hangar_i18n::Key::AccountsSettingsBadgesHint);
+    let st = State::default();
+    let mut ui = h.show(settings_page(&st, h.ctx()));
+    assert!(ui.find("Principal").is_ok());
+    assert!(ui.find(switch.as_ref()).is_err());
+}
+
+#[test]
+fn a_renamed_account_keeps_its_badge_and_a_removed_one_takes_it_along() {
+    let mut h = styled(Harness::new(Locale::En, "graphite"));
+    let mut page = Page::default();
+    page.renaming = Some(("perso".into(), "Personal".into()));
+    page.busy = true;
+    let _ = settings_page::step(&mut page, &mut h.model, Msg::Renamed(Ok(())));
+    assert!(h.model.settings().account_styles.contains_key("perso"));
+
+    page.busy = true;
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::Removed("perso".into(), Ok(())),
+    );
+    assert!(!h.model.settings().account_styles.contains_key("perso"));
+    assert!(h.model.settings().account_styles.contains_key("main"));
 }

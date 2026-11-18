@@ -603,8 +603,67 @@ pub struct Settings {
     /// only when there is one, so a file from before stays as it was.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub nodes: Vec<NodeConfig>,
+    /// Account badges wear the tone and icon chosen for each account
+    /// (`accountStyles`); off, they are the plain labels they always were.
+    /// Written only when on, so a file from before stays as it was.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub account_badges: bool,
+    /// How each Claude account is marked where its badge shows, by account
+    /// id (`accountStyles`): `{"perso": {"tone": "success", "icon":
+    /// "gamepad"}}`. Kept as written, as `keybindings` is, and read through
+    /// `account_style`: a tone or a key a newer version added, or an entry
+    /// this one cannot read, stays in the file for the version that can.
+    /// Written only when an account has a style, so a file from before stays
+    /// as it was.
+    #[serde(skip_serializing_if = "Map::is_empty")]
+    pub account_styles: Map<String, Value>,
     #[serde(flatten)]
     pub extra: Extra,
+}
+
+/// The colours an account's badge can take: the theme's own tones, so a badge
+/// reads on every theme, light or dark, as the other badges of Hangar do.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AccountTone {
+    Accent,
+    Success,
+    Warning,
+    Danger,
+}
+
+impl AccountTone {
+    /// In the order the settings offer them.
+    pub const ALL: [AccountTone; 4] = [
+        AccountTone::Accent,
+        AccountTone::Success,
+        AccountTone::Warning,
+        AccountTone::Danger,
+    ];
+
+    /// The name `accountStyles` stores it under.
+    pub const fn name(self) -> &'static str {
+        match self {
+            AccountTone::Accent => "accent",
+            AccountTone::Success => "success",
+            AccountTone::Warning => "warning",
+            AccountTone::Danger => "danger",
+        }
+    }
+
+    /// The tone stored under `name`; one this version does not know is none.
+    pub fn from_name(name: &str) -> Option<AccountTone> {
+        AccountTone::ALL
+            .into_iter()
+            .find(|tone| tone.name() == name)
+    }
+}
+
+/// What this version reads of an account's entry in `accountStyles`: a tone,
+/// an icon (by its name in Hangar's icon set), or neither.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AccountStyle {
+    pub tone: Option<AccountTone>,
+    pub icon: Option<String>,
 }
 
 /// A machine reached over SSH that runs `hangar-node` (docs/native/nodes.md
@@ -733,6 +792,8 @@ impl Default for Settings {
             kits_everywhere: None,
             projects_folder: None,
             nodes: Vec::new(),
+            account_badges: false,
+            account_styles: Map::new(),
             extra: Map::new(),
         }
     }
@@ -748,6 +809,56 @@ impl Settings {
             100.0
         };
         (percent / 100.0) as f32
+    }
+
+    /// The style chosen for account `id`. A tone this version does not know,
+    /// a value that is not text, or an entry that is not an object reads as
+    /// nothing chosen: the badge is plain, and the file keeps what it holds.
+    pub fn account_style(&self, id: &str) -> AccountStyle {
+        let entry = self.account_styles.get(id);
+        let text = |key: &str| entry.and_then(|entry| entry.get(key)?.as_str());
+        AccountStyle {
+            tone: text("tone").and_then(AccountTone::from_name),
+            icon: text("icon").map(str::to_owned),
+        }
+    }
+
+    /// Sets the tone of account `id`'s badge, or with `None` takes it off.
+    pub fn set_account_tone(&mut self, id: &str, tone: Option<AccountTone>) {
+        self.restyle_account(id, "tone", tone.map(|tone| tone.name().into()));
+    }
+
+    /// Sets the icon of account `id`'s badge by its name, or with `None`
+    /// takes it off.
+    pub fn set_account_icon(&mut self, id: &str, icon: Option<&str>) {
+        self.restyle_account(id, "icon", icon.map(Value::from));
+    }
+
+    /// Writes `key` of account `id`'s entry, keeping the keys this version
+    /// does not know. An entry that is not an object is replaced (the person
+    /// chose anew), and one left empty is taken out of the file.
+    fn restyle_account(&mut self, id: &str, key: &str, value: Option<Value>) {
+        let entry = self
+            .account_styles
+            .entry(id)
+            .or_insert_with(|| Value::Object(Map::new()));
+        if !entry.is_object() {
+            *entry = Value::Object(Map::new());
+        }
+        let Value::Object(fields) = entry else {
+            return;
+        };
+        match value {
+            Some(value) => {
+                fields.insert(key.to_string(), value);
+            }
+            None => {
+                fields.remove(key);
+            }
+        }
+        if fields.is_empty() {
+            self.account_styles.remove(id);
+        }
     }
 }
 

@@ -774,6 +774,87 @@ mod tests {
         }
     }
 
+    /// The badges' styles are read one account at a time, and the file keeps
+    /// all of them as written: a tone or a key of a newer version, an icon
+    /// that is not text and an entry that is not an object read as a plain
+    /// badge here, and are written back for the version that knows them.
+    #[test]
+    fn account_styles_are_read_one_by_one_and_what_is_unknown_is_kept() {
+        use crate::state::types::{AccountStyle, AccountTone};
+
+        let styles = json!({
+            "perso": {"tone": "success", "icon": "gamepad"},
+            "pro": {"tone": "violet", "icon": 7, "badge": "PRO"},
+            "broken": 3
+        });
+        let (state, kept) = read(json!({"settings": {"accountStyles": styles.clone()}}));
+        assert!(kept.is_empty(), "nothing is set aside: {kept:?}");
+        let settings = &state.settings;
+        assert_eq!(
+            settings.account_style("perso"),
+            AccountStyle {
+                tone: Some(AccountTone::Success),
+                icon: Some("gamepad".into()),
+            }
+        );
+        for plain in ["pro", "broken", "nobody"] {
+            assert_eq!(settings.account_style(plain), AccountStyle::default());
+        }
+        let written = serde_json::to_value(&state).unwrap();
+        assert_eq!(written["settings"]["accountStyles"], styles);
+        assert_eq!(app_state(written), state);
+        // No style, no key: a file from before is written back as it was.
+        let plain = serde_json::to_value(app_state(json!({"settings": {}}))).unwrap();
+        assert!(plain["settings"].get("accountStyles").is_none());
+    }
+
+    /// `accountStyles` that is not an object at all is set aside whole, and
+    /// so written back, rather than read as no style and lost at the save.
+    #[test]
+    fn account_styles_that_are_not_an_object_are_set_aside() {
+        let (state, kept) = read(json!({"settings": {"accountStyles": ["perso"]}}));
+        assert!(state.settings.account_styles.is_empty());
+        assert_eq!(
+            kept,
+            [Kept::Field {
+                owner: Owner::Settings,
+                key: "accountStyles".into(),
+                raw: json!(["perso"]),
+            }]
+        );
+    }
+
+    /// Choosing a tone or an icon writes only that key: what a newer version
+    /// added stays, an entry that was not an object is replaced, and an
+    /// entry left with nothing goes.
+    #[test]
+    fn a_style_chosen_keeps_what_this_version_does_not_know() {
+        use crate::state::types::AccountTone;
+
+        let (mut state, _) = read(json!({"settings": {"accountStyles": {
+            "pro": {"tone": "violet", "badge": "PRO"},
+            "broken": 3
+        }}}));
+        let settings = &mut state.settings;
+        settings.set_account_tone("pro", Some(AccountTone::Danger));
+        settings.set_account_icon("broken", Some("lock"));
+        settings.set_account_icon("perso", Some("gamepad"));
+        assert_eq!(
+            Value::Object(settings.account_styles.clone()),
+            json!({
+                "pro": {"tone": "danger", "badge": "PRO"},
+                "broken": {"icon": "lock"},
+                "perso": {"icon": "gamepad"}
+            })
+        );
+        settings.set_account_icon("perso", None);
+        settings.set_account_tone("pro", None);
+        assert_eq!(
+            Value::Object(settings.account_styles.clone()),
+            json!({"pro": {"badge": "PRO"}, "broken": {"icon": "lock"}})
+        );
+    }
+
     #[test]
     fn anything_but_an_object_is_the_empty_state() {
         assert_eq!(app_state(json!([1, 2])), AppState::default());

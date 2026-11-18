@@ -1,7 +1,8 @@
 //! A discreet label naming the Claude account a workspace or a pane runs on
 //! (`AccountBadge.tsx`, `PaneAccountBadge.tsx`, and the navigator's
 //! `accountBadge`). It shows the account's label, never its email, and it is
-//! a label, not a control.
+//! a label, not a control: in the tone and with the icon chosen for the
+//! account (`account_style`), or as a plain grey word.
 
 use hangar_i18n::{Key, Translator, args};
 use hangar_theme::{style, tokens};
@@ -17,7 +18,7 @@ use crate::state::{PaneId, WsId};
 
 use super::model::{AccountSource, ClaudeAccount, resolve_account};
 use super::switch::account_name;
-use super::{Hold, live};
+use super::{Hold, account_style, live};
 
 /// How wide a label grows before it is cut (`max-width: 10em` at 10 px).
 const MAX_WIDTH: f32 = 100.0;
@@ -27,6 +28,7 @@ fn nothing<'a>() -> Element<'a, Message> {
 }
 
 /// With a single account there is nothing to tell apart, so nothing is drawn.
+/// The label takes the style the person gave the account, if any.
 fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, Message> {
     if accounts.len() < 2 {
         return nothing();
@@ -37,12 +39,13 @@ fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, M
         .i18n
         .t_with(Key::AccountsBadgeTitle, &args!("name" => name.as_str()))
         .into_owned();
-    let label = container(
-        text(name)
-            .size(tokens::font_size::MICRO)
-            .wrapping(Wrapping::None)
-            .style(style::text::secondary(ctx.theme)),
-    )
+    let label = container(account_style::label(
+        ctx.theme,
+        account_style::of(ctx, id),
+        name,
+        tokens::font_size::MICRO,
+        Some(ctx.theme.colors.fg_secondary),
+    ))
     .max_width(MAX_WIDTH);
     tip::over(ctx.theme, label, title)
 }

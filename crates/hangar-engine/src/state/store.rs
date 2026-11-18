@@ -1040,6 +1040,8 @@ fn reduce(model: &mut Store, action: StoreAction) -> StoreOutcome {
                 // The machines are not a preference: a reset of the
                 // preferences does not forget them.
                 nodes: current.nodes.clone(),
+                // Nor how the accounts are marked: they belong to the accounts.
+                account_styles: current.account_styles.clone(),
                 extra: current.extra.clone(),
                 ..Settings::default()
             };

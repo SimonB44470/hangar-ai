@@ -7,8 +7,10 @@
 //! accounts panes were launched on), `switch` (restart sets, usage, labels),
 //! `usage` (the usage cache on disk), `menu_items` (the lines of the
 //! navigator's and the pane's menus), `switcher` (the toolbar button),
-//! `badge`, `plan` (the plan block with a line per account), `picker` (the
-//! workspace dialog's select) and `settings_page` (Settings › Accounts).
+//! `badge`, `account_style` (the tone and icon chosen for an account, drawn
+//! by every label that names one), `plan` (the plan block with a line per
+//! account), `picker` (the workspace dialog's select) and `settings_page`
+//! (Settings › Accounts).
 //!
 //! # What other packages call
 //!
@@ -21,6 +23,7 @@
 //!   usage counts against the account it was launched on, and "running" in
 //!   the switcher's question means "has noted an account".
 
+mod account_style;
 mod badge;
 mod menu_items;
 mod picker;
@@ -191,6 +194,12 @@ pub enum Msg {
     RemoveConfirm(AccountId),
     RemoveCancel,
     MakeDefault(AccountId),
+    /// Coloured badges turned on or off for every account.
+    SetBadges(bool),
+    /// The tone of an account's badge; `None` takes it back to plain.
+    SetTone(AccountId, Option<crate::state::AccountTone>),
+    /// The icon of an account's badge; `None` takes it off.
+    SetIcon(AccountId, Option<hangar_ui::Icon>),
     LogIn(AccountId),
     AddInput(String),
     AddSubmit,
@@ -261,6 +270,9 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         | Msg::RemoveConfirm(_)
         | Msg::RemoveCancel
         | Msg::MakeDefault(_)
+        | Msg::SetBadges(_)
+        | Msg::SetTone(..)
+        | Msg::SetIcon(..)
         | Msg::LogIn(_)
         | Msg::AddInput(_)
         | Msg::AddSubmit
