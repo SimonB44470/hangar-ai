@@ -1415,6 +1415,9 @@ fn signature(st: &State, m: &Model) -> u64 {
         ws.view_panes.len().hash(&mut hash);
         if follows {
             ws.claude_account.hash(&mut hash);
+            // The account it reads from its folder: a folder's account that
+            // changes, or a move to another folder, moves its agents too.
+            crate::state::folders::account_of(&m.state().folders, ws).hash(&mut hash);
         }
         for pane in &ws.panes {
             pane.id.hash(&mut hash);
@@ -2190,6 +2193,74 @@ mod tests {
     /// when its turn changes: an agent that is not does not make each of its
     /// turns a sync, and a draft is no part of the signature (its timer
     /// looks at it again, `Msg::FollowWake`).
+    /// A workspace with no account of its own runs on its folder's: moved
+    /// into a folder on another account, the sync looks again and its idle
+    /// agent moves there; one that chose its account stays on it.
+    #[test]
+    fn an_idle_agent_follows_its_workspace_into_a_folder_on_another_account() {
+        use crate::accounts::{Follow, Job};
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+        use controller::FollowStep;
+
+        let mut h = Harness::new(hangar_i18n::Locale::En, "graphite").edit(|state| {
+            state.folders = vec![crate::state::types::WorkspaceFolder {
+                id: "games".into(),
+                name: "Games".into(),
+                claude_account: Some("perso".into()),
+                ..Default::default()
+            }];
+        });
+        h.model.ui.opened_ids.push("w1".into());
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut st = State::default();
+        let mut rt = controller::mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        st.panes.insert("p1".into(), rt);
+        // Between two turns, nothing typed, nothing of its own running.
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        let now = Instant::now();
+        let look = |st: &mut State, h: &Harness| {
+            let rt = st.panes.get_mut("p1").expect("p1");
+            controller::account_follow(rt, &h.model, now, Job::Nothing)
+        };
+        assert_eq!(look(&mut st, &h).verdict, Follow::Stay, "on the default");
+
+        let before = signature(&st, &h.model);
+        h.model.apply(StoreAction::MoveWorkspace {
+            id: "w1".into(),
+            folder: Some("games".into()),
+            before: None,
+        });
+        assert_ne!(signature(&st, &h.model), before, "the sync looks again");
+        let moved = look(&mut st, &h);
+        assert_eq!(
+            (moved.verdict, moved.step, moved.to.as_str()),
+            (Follow::Now, FollowStep::Restart, "perso")
+        );
+
+        // The folder's account changes: so does the signature, and the move.
+        let before = signature(&st, &h.model);
+        h.model.apply(StoreAction::UpdateFolder(
+            "games".into(),
+            Patch::new(|folder: &mut crate::state::types::WorkspaceFolder| {
+                folder.claude_account = Some("pro".into());
+            }),
+        ));
+        assert_ne!(signature(&st, &h.model), before);
+
+        // Its own choice wins over its folder's: it stays where it runs.
+        h.model.apply(StoreAction::UpdateWorkspace(
+            "w1".into(),
+            Patch::new(|ws: &mut crate::state::Workspace| ws.claude_account = Some("main".into())),
+        ));
+        assert_eq!(look(&mut st, &h).verdict, Follow::Stay, "its own choice");
+    }
+
     #[test]
     fn only_the_turn_of_a_pane_waiting_to_move_is_part_of_the_signature() {
         use crate::state::live::AgentActivity;
