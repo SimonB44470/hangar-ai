@@ -28,8 +28,18 @@ pub enum Key {
     AccountsMovingBlocked,
     /// `accounts.movingBlockedTitle`
     AccountsMovingBlockedTitle,
+    /// `accounts.movingCommandTitle`
+    AccountsMovingCommandTitle,
+    /// `accounts.movingDraftTitle`
+    AccountsMovingDraftTitle,
     /// `accounts.movingTitle`
     AccountsMovingTitle,
+    /// `accounts.movingTurnTitle`
+    AccountsMovingTurnTitle,
+    /// `accounts.movingUnreadableTitle`
+    AccountsMovingUnreadableTitle,
+    /// `accounts.movingUnreportedTitle`
+    AccountsMovingUnreportedTitle,
     /// `accounts.pane.badgeTitle`
     AccountsPaneBadgeTitle,
     /// `accounts.pane.menuHeading`
@@ -4463,7 +4473,7 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2223;
+pub const KEY_COUNT: usize = 2228;
 
 impl Key {
     /// Every key, in the order of their ids.
@@ -4475,7 +4485,12 @@ impl Key {
         Key::AccountsMoving,
         Key::AccountsMovingBlocked,
         Key::AccountsMovingBlockedTitle,
+        Key::AccountsMovingCommandTitle,
+        Key::AccountsMovingDraftTitle,
         Key::AccountsMovingTitle,
+        Key::AccountsMovingTurnTitle,
+        Key::AccountsMovingUnreadableTitle,
+        Key::AccountsMovingUnreportedTitle,
         Key::AccountsPaneBadgeTitle,
         Key::AccountsPaneMenuHeading,
         Key::AccountsPickerDefault,
@@ -6703,7 +6718,12 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.moving", en: Text::plain("→ {name}"), fr: Text::plain("→ {name}") },
     Message { id: "accounts.movingBlocked", en: Text::plain("{name}: not logged in"), fr: Text::plain("{name}\u{202f}: non connecté") },
     Message { id: "accounts.movingBlockedTitle", en: Text::plain("{name} is not logged in, so this pane stays on its account: log it in from Settings › Accounts"), fr: Text::plain("{name} n’est pas connecté, ce panneau reste donc sur son compte\u{202f}: connecte-le depuis Réglages › Comptes") },
-    Message { id: "accounts.movingTitle", en: Text::plain("Moves to {name}, on the same conversation, once Hangar knows it has nothing to lose: its turn over as the hangar-bridge mod reports it, nothing typed in it and not sent, no command of its own still running"), fr: Text::plain("Passe sur {name}, sur la même conversation, dès que Hangar sait qu’il n’a rien à perdre\u{202f}: son tour fini d’après le mod hangar-bridge, rien de tapé dedans sans être envoyé, plus aucune commande à lui en cours") },
+    Message { id: "accounts.movingCommandTitle", en: Text::plain("Moves to {name} once its command is over: {command}"), fr: Text::plain("Passe sur {name} dès que sa commande est finie\u{202f}: {command}") },
+    Message { id: "accounts.movingDraftTitle", en: Text::plain("Moves to {name} once what is typed in it is sent, or left alone for 90\u{a0}s"), fr: Text::plain("Passe sur {name} dès que ce qui y est tapé est envoyé, ou laissé tel quel 90\u{a0}s") },
+    Message { id: "accounts.movingTitle", en: Text::plain("Moves to {name}, on the same conversation, once Hangar has checked that no command of its own still runs"), fr: Text::plain("Passe sur {name}, sur la même conversation, dès que Hangar a vérifié qu’aucune commande à lui ne tourne encore") },
+    Message { id: "accounts.movingTurnTitle", en: Text::plain("Moves to {name}, on the same conversation, once its turn is over"), fr: Text::plain("Passe sur {name}, sur la même conversation, dès que son tour est fini") },
+    Message { id: "accounts.movingUnreadableTitle", en: Text::plain("Moves to {name} once Hangar can tell that no command of its own runs: its processes could not be read"), fr: Text::plain("Passe sur {name} dès que Hangar peut voir qu’aucune commande à lui ne tourne\u{202f}: ses processus n’ont pas pu être lus") },
+    Message { id: "accounts.movingUnreportedTitle", en: Text::plain("Moves to {name} once its turn is known to be over: the hangar-bridge mod has not reported it (not loaded, or nothing said yet)"), fr: Text::plain("Passe sur {name} dès que la fin de son tour est connue\u{202f}: le mod hangar-bridge ne l’a pas signalée (pas chargé, ou rien dit encore)") },
     Message { id: "accounts.pane.badgeTitle", en: Text::plain("This agent runs on the “{name}” account, not its workspace’s"), fr: Text::plain("Cet agent tourne sur le compte «\u{202f}{name}\u{202f}», pas celui de son workspace") },
     Message { id: "accounts.pane.menuHeading", en: Text::plain("Claude account for this pane"), fr: Text::plain("Compte Claude de ce volet") },
     Message { id: "accounts.picker.default", en: Text::plain("Default ({name})"), fr: Text::plain("Par défaut ({name})") },

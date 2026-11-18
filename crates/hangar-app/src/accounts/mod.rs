@@ -108,8 +108,35 @@ pub struct Live {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Moving {
     pub to: AccountId,
+    /// What holds it back, which its header's tooltip says.
+    pub hold: Hold,
+}
+
+impl Moving {
     /// `to` is not logged in: the pane stays where it is until it is.
-    pub blocked: bool,
+    pub fn blocked(&self) -> bool {
+        self.hold == Hold::NotLoggedIn
+    }
+}
+
+/// What holds a pane's move to another account back (`switch::follow`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hold {
+    /// The account is not logged in: the pane stays.
+    NotLoggedIn,
+    /// Its agent is inside a turn: at work, or waiting on the person.
+    Turn,
+    /// Its turns are not reported: the hangar-bridge mod is not loaded, or
+    /// has said nothing yet.
+    Unreported,
+    /// Something typed in its prompt and not sent.
+    Draft,
+    /// Whether a command of its own still runs is being asked.
+    Checking,
+    /// A command its agent started still runs: what it is, shortened.
+    Command(String),
+    /// Its processes could not be read, so whether one runs is not known.
+    Unreadable,
 }
 
 /// The package's messages, routed by the shell as `Message::Accounts(Msg)`.
@@ -491,7 +518,10 @@ fn switch_workspace(workspace: &Workspace, live: &Live) -> SwitchWorkspace {
                     pane.agent.as_str().to_string()
                 },
                 claude_account: pane.claude_account.clone(),
-                running: live.launched.is_running(&pane.id),
+                // A pane on a node runs on the node's login: no account of
+                // this computer's to restart it on.
+                running: live.launched.is_running(&pane.id)
+                    && crate::nodes::away::node_of(workspace, pane).is_none(),
             })
             .collect(),
     }
@@ -543,17 +573,19 @@ fn apply_switch(
     }
 }
 
-/// The agents restart with their conversation: a respawn with no patch keeps
-/// the session. Asked of the person when `account_switch_ask` is on; when it
-/// is off, the panes move by themselves instead (`follow`).
+/// The agents restart on their new account with their conversation, which
+/// the panes resume whatever `auto_resume` says, as for a move they make by
+/// themselves (`panes::Msg::MoveAccounts`). Asked of the person when
+/// `account_switch_ask` is on; when it is off, the panes move by themselves
+/// instead (`follow`).
 fn restart_task(ws: &WsId, panes: Vec<PaneId>) -> Task<Message> {
     if panes.is_empty() {
         return Task::none();
     }
-    Task::done(Message::Intent(Intent::RestartPanes {
-        ws: ws.clone(),
+    Task::done(Message::Panes(crate::panes::Msg::MoveAccounts(
+        ws.clone(),
         panes,
-    }))
+    )))
 }
 
 fn set_workspace_account(

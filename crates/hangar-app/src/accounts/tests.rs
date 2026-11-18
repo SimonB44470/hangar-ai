@@ -526,7 +526,7 @@ fn a_pane_on_its_way_to_another_account_says_so_in_its_header() {
         p.clone(),
         Moving {
             to: "perso".into(),
-            blocked: false,
+            hold: Hold::Turn,
         },
     );
     {
@@ -539,7 +539,7 @@ fn a_pane_on_its_way_to_another_account_says_so_in_its_header() {
         p.clone(),
         Moving {
             to: "pro".into(),
-            blocked: true,
+            hold: Hold::NotLoggedIn,
         },
     );
     let mut ui = h.show(pane_badge(h.ctx(), &w, &p));
@@ -1192,4 +1192,45 @@ fn a_single_account_keeps_the_plain_plan_block() {
     )]);
     reported(&mut h);
     assert!(plan_block(h.ctx()).is_none());
+}
+
+/// The "→ Perso" chip's tooltip says what the pane waits for: its turn,
+/// a mod that does not report it, a draft, the command it runs by name, or
+/// processes that could not be read.
+#[test]
+fn a_moving_panes_tooltip_says_what_it_waits_for() {
+    let t = hangar_i18n::Translator::new(Locale::En);
+    let title = |hold: Hold| badge::moving_title(t, "Perso", &hold);
+    assert!(title(Hold::Turn).contains("its turn is over"));
+    assert!(title(Hold::Unreported).contains("hangar-bridge"));
+    assert!(title(Hold::Draft).contains("typed"));
+    assert!(title(Hold::Command("cargo build --release".into())).contains("cargo build --release"));
+    assert!(title(Hold::Unreadable).contains("could not be read"));
+    assert!(title(Hold::NotLoggedIn).contains("not logged in"));
+    let fr = hangar_i18n::Translator::new(Locale::Fr);
+    assert!(badge::moving_title(fr, "Perso", &Hold::Command("make".into())).contains("make"));
+}
+
+/// Asked first, a switch restarts the agents of this computer only: a pane
+/// on a node runs on the node's login, and is neither counted nor
+/// restarted.
+#[test]
+fn a_pane_on_a_node_is_not_restarted_by_a_switch() {
+    let mut h = asking().edit(|state| {
+        state.workspaces[0].panes.push(crate::state::Pane {
+            id: "far".into(),
+            name: "Far".into(),
+            agent: crate::state::AgentId::Claude,
+            node: Some("n1".into()),
+            ..crate::state::Pane::default()
+        });
+    });
+    h.model.live.accounts.launched.note("far", Some("main"));
+    assert_eq!(running_in(&h.model, &ws("w1"), SwitchScope::Workspace), 0);
+    assert_eq!(
+        set_workspace_account(&mut h.model, &ws("w1"), Some("perso".into()), true).units(),
+        0
+    );
+    h.model.live.accounts.launched.note("p1", Some("main"));
+    assert_eq!(running_in(&h.model, &ws("w1"), SwitchScope::Workspace), 1);
 }
