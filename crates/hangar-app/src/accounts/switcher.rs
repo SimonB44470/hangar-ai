@@ -208,15 +208,15 @@ fn account_row<'a>(
     } else {
         Space::new().width(tokens::size::ICON).into()
     };
-    let mark = account_style::of(ctx, &account.id);
-    let label: Element<'a, Message> = if mark.is_plain() {
+    let marked = account_style::of(ctx, &account.id);
+    let label: Element<'a, Message> = if marked.is_plain() {
         text(account.label.as_str())
             .size(tokens::font_size::BODY)
             .into()
     } else {
         account_style::label(
             t,
-            mark,
+            marked,
             account.label.clone(),
             tokens::font_size::BODY,
             None,
