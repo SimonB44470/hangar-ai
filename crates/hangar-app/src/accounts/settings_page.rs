@@ -15,10 +15,13 @@ use crate::ctx::Ctx;
 use crate::message::Message;
 use crate::services::Services;
 use crate::state::types::AgentId;
+use crate::state::types::WorkspaceFolder;
 use crate::state::{AccountTone, Model, Pane, Patch, Settings, StoreAction, Workspace};
 
 use super::account_style::{self, Mark};
-use super::model::{AccountId, ClaudeAccount, MAIN_ACCOUNT, names_account, resolve_account};
+use super::model::{
+    AccountId, AccountLevels, ClaudeAccount, MAIN_ACCOUNT, names_account, resolve_account,
+};
 use super::{Msg, live};
 
 /// What the page itself remembers: the form it has open, the command it
@@ -104,18 +107,29 @@ fn open_login_pane(page: &mut Page, m: &mut Model, t: Translator, id: &str) {
 }
 
 /// What names a removed account, so that it can be cleared: the workspaces
-/// with it as their own, the panes with it as theirs, and whether the default
-/// was it.
+/// with it as their own, the panes with it as theirs, the navigator folders
+/// with it for their workspaces, and whether the default was it.
 #[derive(Debug, Default, PartialEq, Eq)]
 struct Forgotten {
     workspaces: Vec<String>,
     panes: Vec<(String, String)>,
+    folders: Vec<String>,
     default: bool,
 }
 
-fn who_names(workspaces: &[Workspace], default: Option<&str>, id: &str) -> Forgotten {
+fn who_names(
+    workspaces: &[Workspace],
+    folders: &[WorkspaceFolder],
+    default: Option<&str>,
+    id: &str,
+) -> Forgotten {
     let mut forgotten = Forgotten {
         default: names_account(default, id),
+        folders: folders
+            .iter()
+            .filter(|folder| names_account(folder.claude_account.as_deref(), id))
+            .map(|folder| folder.id.clone())
+            .collect(),
         ..Forgotten::default()
     };
     // A workspace its node runs names an account of that machine, which
@@ -139,9 +153,17 @@ fn who_names(workspaces: &[Workspace], default: Option<&str>, id: &str) -> Forgo
 fn forget_account(m: &mut Model, id: &str) {
     let forgotten = who_names(
         &m.state().workspaces,
+        &m.state().folders,
         m.settings().claude_account.as_deref(),
         id,
     );
+    // Their workspaces then follow the default, as when the folder names none.
+    for folder in forgotten.folders {
+        m.apply(StoreAction::UpdateFolder(
+            folder,
+            Patch::new(|folder: &mut WorkspaceFolder| folder.claude_account = None),
+        ));
+    }
     for ws in forgotten.workspaces {
         m.apply(StoreAction::UpdateWorkspace(
             ws,
@@ -491,13 +513,10 @@ fn account_row<'a>(
         .workspaces
         .iter()
         .filter(|ws| {
-            resolve_account(
-                accounts,
-                ctx.model.settings().claude_account.as_deref(),
-                ws.claude_account.as_deref(),
-                None,
-            )
-            .id == account.id
+            AccountLevels::of(ctx.model.state(), ws, None)
+                .resolve(accounts)
+                .id
+                == account.id
         })
         .map(|ws| ws.name.as_str())
         .collect();
@@ -877,29 +896,48 @@ mod tests {
             workspace("w2", None, &[("c", Some("pro")), ("d", Some("perso"))]),
             workspace("w3", Some("pro"), &[]),
         ];
+        let folder = |id: &str, account: Option<&str>| WorkspaceFolder {
+            id: id.into(),
+            name: id.into(),
+            claude_account: account.map(str::to_string),
+            ..WorkspaceFolder::default()
+        };
+        let folders = [
+            folder("games", Some(" perso ")),
+            folder("work", Some("pro")),
+            folder("plain", None),
+        ];
         assert_eq!(
-            who_names(&all, Some("perso"), "perso"),
+            who_names(&all, &folders, Some("perso"), "perso"),
             Forgotten {
                 workspaces: vec!["w1".into()],
                 panes: vec![("w1".into(), "b".into()), ("w2".into(), "d".into())],
+                folders: vec!["games".into()],
                 default: true,
             }
         );
         assert_eq!(
-            who_names(&all, Some("main"), "pro"),
+            who_names(&all, &folders, Some("main"), "pro"),
             Forgotten {
                 workspaces: vec!["w3".into()],
                 panes: vec![("w2".into(), "c".into())],
+                folders: vec!["work".into()],
                 default: false,
             }
         );
-        assert_eq!(who_names(&all, None, "gone"), Forgotten::default());
+        assert_eq!(
+            who_names(&all, &folders, None, "gone"),
+            Forgotten::default()
+        );
 
         // A workspace its node runs names that machine's accounts: nothing
         // of it is touched, and its node is told nothing.
         let mut mirror = workspace("w4", Some("perso"), &[("e", Some("perso"))]);
         mirror.node = Some("n1".into());
         mirror.hosted = Some(true);
-        assert_eq!(who_names(&[mirror], None, "perso"), Forgotten::default());
+        assert_eq!(
+            who_names(&[mirror], &[], None, "perso"),
+            Forgotten::default()
+        );
     }
 }

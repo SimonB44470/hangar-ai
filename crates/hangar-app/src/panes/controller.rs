@@ -27,7 +27,7 @@ use hangar_i18n::{Key, Locale, Translator, args};
 use hangar_term::Terminal;
 use iced::Task;
 
-use crate::accounts::{Follow, FollowInput, Hold, Job, Turn, follow};
+use crate::accounts::{AccountLevels, Follow, FollowInput, Hold, Job, Turn, follow};
 use crate::kits::model::{
     KitLaunchIssue, LaunchReason, PaneKits, kit_issue_notes, load_pane_kits_with,
 };
@@ -328,16 +328,6 @@ fn role_flags(ws: &Workspace, pane: &Pane) -> (Option<String>, Vec<String>) {
     (orchestration_of(ws).permission_mode, tools)
 }
 
-/// The Claude account choices of a launch, the settings', the workspace's
-/// and the pane's, which P8's `launch_account` resolves (pane, workspace,
-/// default, then main) off the UI thread: it reads the accounts' files.
-#[derive(Debug, Clone, Default)]
-struct AccountChoice {
-    default: Option<String>,
-    workspace: Option<String>,
-    pane: Option<String>,
-}
-
 /// What `pty_spawn` is called with, gathered on the UI thread.
 struct Spawn {
     id: PaneId,
@@ -354,8 +344,10 @@ struct Spawn {
     /// `None` for a login pane, which starts with no kit.
     kits: Option<KitChoice>,
     agent: AgentId,
-    /// A Claude Code pane's: the account it is launched on.
-    account: Option<AccountChoice>,
+    /// A Claude Code pane's: the account choices it is launched on (pane,
+    /// workspace, the workspace's folder, default), which P8 resolves off
+    /// the UI thread (`AccountLevels::launch`): it reads the accounts' files.
+    account: Option<AccountLevels>,
     /// The workspace's MCP choice applies (a Claude Code that is not a login
     /// pane).
     mcp: Option<McpLaunch>,
@@ -428,11 +420,8 @@ pub fn mount(
     let node = crate::nodes::away::node_of(ws, pane);
     let remote = node.is_some();
     let login = pane.agent == AgentId::Claude && pane.login == Some(true);
-    let account = (pane.agent == AgentId::Claude).then(|| AccountChoice {
-        default: settings.claude_account.clone(),
-        workspace: ws.claude_account.clone(),
-        pane: pane.claude_account.clone(),
-    });
+    let account =
+        (pane.agent == AgentId::Claude).then(|| AccountLevels::of(m.state(), ws, Some(pane)));
     // Resolved again when the shell starts (`start`), once the machine's
     // shells are known.
     let shell = shell_of(m, ws, pane).cloned();
@@ -787,13 +776,7 @@ impl Spawn {
         kits: PaneKits,
     ) -> Result<SpawnReport, String> {
         let mut notes = Vec::new();
-        let resolved = self.account.as_ref().map(|choice| {
-            crate::accounts::launch_account(
-                choice.default.as_deref(),
-                choice.workspace.as_deref(),
-                choice.pane.as_deref(),
-            )
-        });
+        let resolved = self.account.as_ref().map(AccountLevels::launch);
         let account = resolved.as_ref().map(|resolved| resolved.id.clone());
         let missing = resolved.and_then(|resolved| resolved.missing);
         let (mcp, scope) = match &self.mcp {
@@ -1582,17 +1565,12 @@ pub fn movable(rt: &PaneRt, pane: &Pane) -> bool {
         && rt.status == PaneStatus::Running
 }
 
-/// The account `pane` of `ws` should run on now (pane > workspace >
-/// default), and whether it is logged in (`None` when it is not listed);
-/// nothing while the accounts are not known.
+/// The account `pane` of `ws` should run on now (pane > workspace > its
+/// folder > default), and whether it is logged in (`None` when it is not
+/// listed); nothing while the accounts are not known.
 pub fn wanted_account(m: &Model, ws: &Workspace, pane: &Pane) -> Option<(String, Option<bool>)> {
     let accounts = m.live.accounts.accounts.as_deref()?;
-    let wanted = crate::accounts::resolve_account(
-        accounts,
-        m.settings().claude_account.as_deref(),
-        ws.claude_account.as_deref(),
-        pane.claude_account.as_deref(),
-    );
+    let wanted = AccountLevels::of(m.state(), ws, Some(pane)).resolve(accounts);
     let logged_in = accounts
         .iter()
         .find(|account| account.id == wanted.id)

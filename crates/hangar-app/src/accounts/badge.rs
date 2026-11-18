@@ -16,7 +16,7 @@ use crate::message::Message;
 use crate::state::types::AgentId;
 use crate::state::{PaneId, WsId};
 
-use super::model::{AccountSource, ClaudeAccount, resolve_account};
+use super::model::{AccountLevels, AccountSource, ClaudeAccount};
 use super::switch::account_name;
 use super::{Hold, account_style, live};
 
@@ -28,17 +28,30 @@ fn nothing<'a>() -> Element<'a, Message> {
 }
 
 /// With a single account there is nothing to tell apart, so nothing is drawn.
-/// The label takes the style the person gave the account, if any.
-fn chip<'a>(ctx: Ctx<'a>, accounts: &[ClaudeAccount], id: &str) -> Element<'a, Message> {
+/// The label takes the style the person gave the account, if any. `folder`
+/// names the navigator folder the account comes from, when it is that
+/// folder's rather than a choice of its own: the tooltip says so.
+fn chip<'a>(
+    ctx: Ctx<'a>,
+    accounts: &[ClaudeAccount],
+    id: &str,
+    folder: Option<&str>,
+) -> Element<'a, Message> {
     if accounts.len() < 2 {
         return nothing();
     }
     let unknown = ctx.t(Key::AccountsPickerUnknown);
     let name = account_name(accounts, Some(id), &unknown);
-    let title = ctx
-        .i18n
-        .t_with(Key::AccountsBadgeTitle, &args!("name" => name.as_str()))
-        .into_owned();
+    let title = match folder {
+        Some(folder) => ctx.i18n.t_with(
+            Key::AccountsBadgeFolderTitle,
+            &args!("name" => name.as_str(), "folder" => folder),
+        ),
+        None => ctx
+            .i18n
+            .t_with(Key::AccountsBadgeTitle, &args!("name" => name.as_str())),
+    }
+    .into_owned();
     let label = container(account_style::label(
         ctx.theme,
         account_style::of(ctx, id),
@@ -103,7 +116,7 @@ pub(super) fn moving_title(t: Translator, name: &str, hold: &Hold) -> String {
 }
 
 /// A navigator row's badge: only a workspace on an account other than the
-/// default is worth a label.
+/// default is worth a label, its own or the one it reads from its folder.
 pub fn workspace<'a>(ctx: Ctx<'a>, ws: &'a WsId) -> Element<'a, Message> {
     let Some(accounts) = live(ctx).accounts.as_deref() else {
         return nothing();
@@ -111,14 +124,26 @@ pub fn workspace<'a>(ctx: Ctx<'a>, ws: &'a WsId) -> Element<'a, Message> {
     let Some(workspace) = ctx.model.workspace(ws) else {
         return nothing();
     };
-    let default = ctx.model.settings().claude_account.as_deref();
-    let own = resolve_account(accounts, default, workspace.claude_account.as_deref(), None);
-    if own.source != AccountSource::Workspace
-        || own.id == resolve_account(accounts, default, None, None).id
-    {
+    let state = ctx.model.state();
+    let own = AccountLevels::of(state, workspace, None).resolve(accounts);
+    let default = AccountLevels {
+        default: state.settings.claude_account.clone(),
+        ..AccountLevels::default()
+    }
+    .resolve(accounts);
+    let folder = match own.source {
+        AccountSource::Workspace => None,
+        AccountSource::Folder => state
+            .folders
+            .iter()
+            .find(|folder| workspace.folder_id.as_deref() == Some(folder.id.as_str()))
+            .map(|folder| folder.name.as_str()),
+        _ => return nothing(),
+    };
+    if own.id == default.id {
         return nothing();
     }
-    chip(ctx, accounts, &own.id)
+    chip(ctx, accounts, &own.id, folder)
 }
 
 /// A pane header's badge: it names the account of a pane whose agent runs on
@@ -145,19 +170,15 @@ pub fn pane<'a>(ctx: Ctx<'a>, ws: &'a WsId, pane: &'a PaneId) -> Element<'a, Mes
     if let Some(moving) = live(ctx).moving.get(&pane.id) {
         return moving_chip(ctx, accounts, moving);
     }
-    let default = ctx.model.settings().claude_account.as_deref();
-    let own = resolve_account(
-        accounts,
-        default,
-        workspace.claude_account.as_deref(),
-        pane.claude_account.as_deref(),
-    );
+    let state = ctx.model.state();
+    let own = AccountLevels::of(state, workspace, Some(pane)).resolve(accounts);
     if own.source != AccountSource::Pane {
         return nothing();
     }
-    let base = resolve_account(accounts, default, workspace.claude_account.as_deref(), None);
+    // What the workspace runs on: its own, its folder's or the default.
+    let base = AccountLevels::of(state, workspace, None).resolve(accounts);
     if own.id == base.id {
         return nothing();
     }
-    chip(ctx, accounts, &own.id)
+    chip(ctx, accounts, &own.id, None)
 }

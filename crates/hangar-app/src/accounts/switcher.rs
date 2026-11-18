@@ -31,7 +31,7 @@ use crate::navigator::plan::{shown_pct, window_label};
 use crate::panes_logic::wall_clock_ms;
 use crate::state::WsId;
 
-use super::model::{AccountId, ClaudeAccount, resolve_account};
+use super::model::{AccountId, AccountLevels, AccountSource, ClaudeAccount, resolve_account};
 use super::switch::{AccountUsage, FIVE_HOUR, WEEKLY, account_name};
 use super::{Msg, State, account_style, live};
 
@@ -83,18 +83,33 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
         return nothing();
     };
     let default = ctx.model.settings().claude_account.as_deref();
-    let current = resolve_account(accounts, default, workspace.claude_account.as_deref(), None).id;
+    // Its own account, the one it reads from its folder, or the default.
+    let resolved = AccountLevels::of(ctx.model.state(), workspace, None).resolve(accounts);
+    let current = resolved.id;
     let default_id = resolve_account(accounts, default, None, None).id;
 
     let unknown = ctx.t(Key::AccountsPickerUnknown);
     let current_name = account_name(accounts, Some(&current), &unknown);
-    let title = ctx
-        .i18n
-        .t_with(
+    let folder = if resolved.source == AccountSource::Folder {
+        ctx.model
+            .state()
+            .folders
+            .iter()
+            .find(|folder| workspace.folder_id.as_deref() == Some(folder.id.as_str()))
+    } else {
+        None
+    };
+    let title = match folder {
+        Some(folder) => ctx.i18n.t_with(
+            Key::AccountsBadgeFolderTitle,
+            &args!("name" => current_name.as_str(), "folder" => folder.name.as_str()),
+        ),
+        None => ctx.i18n.t_with(
             Key::AccountsSwitcherButton,
             &args!("name" => current_name.as_str()),
-        )
-        .into_owned();
+        ),
+    }
+    .into_owned();
 
     let label = container(
         text(current_name)

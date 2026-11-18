@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::state::live::RateLimit;
 
-use super::model::{AccountId, ClaudeAccount, read_account_choice, resolve_account};
+use super::model::{
+    AccountId, ClaudeAccount, DEFAULT_CHOICE, read_account_choice, resolve_account,
+};
 
 /// What this logic needs to know of a pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,8 +29,12 @@ pub struct SwitchPane {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SwitchWorkspace {
     pub id: String,
-    /// The workspace's own account; absent or blank follows the default.
+    /// The workspace's own account; absent or blank follows its folder's,
+    /// then the default; `DEFAULT_CHOICE` follows the default.
     pub claude_account: Option<String>,
+    /// The account it reads from its navigator folder, if that names one
+    /// (`folders::account_of`).
+    pub folder_account: Option<String>,
     pub panes: Vec<SwitchPane>,
 }
 
@@ -50,13 +56,23 @@ pub fn panes_to_restart_on_workspace_change(workspace: &SwitchWorkspace) -> Vec<
         .collect()
 }
 
+/// Whether `workspace` runs on the default account, and so changes when it
+/// does: it chose « Default », or chose nothing in a folder that names none.
+pub fn follows_default(workspace: &SwitchWorkspace) -> bool {
+    match read_account_choice(workspace.claude_account.as_deref()).as_deref() {
+        Some(DEFAULT_CHOICE) => true,
+        Some(_) => false,
+        None => !has_own(workspace.folder_account.as_deref()),
+    }
+}
+
 /// The Claude Code panes that follow the default when it changes: those of
-/// the workspaces without an account of their own, minus the panes with
-/// theirs.
+/// the workspaces that run on it (`follows_default`), minus the panes with
+/// an account of their own.
 pub fn panes_to_restart_on_default_change(workspaces: &[SwitchWorkspace]) -> Vec<&SwitchPane> {
     workspaces
         .iter()
-        .filter(|workspace| !has_own(workspace.claude_account.as_deref()))
+        .filter(|workspace| follows_default(workspace))
         .flat_map(panes_to_restart_on_workspace_change)
         .collect()
 }
@@ -376,6 +392,7 @@ mod tests {
             SwitchWorkspace {
                 id: "w1".into(),
                 claude_account: None,
+                folder_account: None,
                 panes: vec![
                     pane("a", "claude", None, true),
                     pane("b", "shell", None, true),
@@ -386,11 +403,13 @@ mod tests {
             SwitchWorkspace {
                 id: "w2".into(),
                 claude_account: Some("perso".into()),
+                folder_account: None,
                 panes: vec![pane("e", "claude", None, true)],
             },
             SwitchWorkspace {
                 id: "w3".into(),
                 claude_account: Some("  ".into()),
+                folder_account: None,
                 panes: vec![
                     pane("f", "shell", None, false),
                     pane("g", "claude", None, false),
@@ -419,6 +438,18 @@ mod tests {
             ids(&panes_to_restart_on_default_change(&workspaces())),
             ["a", "d", "g"]
         );
+    }
+
+    #[test]
+    fn a_workspace_on_its_folders_account_stays_out_of_a_default_change_unless_it_chose_default() {
+        let mut all = workspaces();
+        // w1 now reads « pro » from its folder; w3 chose « Default » there.
+        all[0].folder_account = Some("pro".into());
+        all[2].claude_account = Some(DEFAULT_CHOICE.into());
+        all[2].folder_account = Some("pro".into());
+        assert!(!follows_default(&all[0]));
+        assert!(follows_default(&all[2]));
+        assert_eq!(ids(&panes_to_restart_on_default_change(&all)), ["g"]);
     }
 
     #[test]

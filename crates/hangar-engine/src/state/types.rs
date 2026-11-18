@@ -232,6 +232,10 @@ pub struct Workspace {
     /// Ports Hangar Mobile may open for it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub mobile_ports: Option<Vec<u16>>,
+    /// The Claude account it chose. Absent: none, it runs on its folder's
+    /// (`WorkspaceFolder::claude_account`, read, never copied), else the
+    /// default; `"@default"` (`accounts::DEFAULT_CHOICE`): the default, over
+    /// its folder's.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claude_account: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -437,9 +441,11 @@ pub struct WorkspaceFolder {
     pub id: String,
     pub name: String,
     pub collapsed: bool,
-    /// The Claude account a workspace starts on when it is made in this
-    /// folder or moved into it without an account of its own. Written only
-    /// when set, so a file from before stays as it was.
+    /// The Claude account of the workspaces filed in this folder that chose
+    /// none of their own, read at each launch (`folders::account_of`): one
+    /// moved in follows it, one moved out leaves it. Not for a workspace its
+    /// node runs. Written only when set, so a file from before stays as it
+    /// was.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub claude_account: Option<String>,
     #[serde(flatten)]

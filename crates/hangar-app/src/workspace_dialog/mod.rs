@@ -394,34 +394,14 @@ impl State {
 
     /// The account the workspace made here runs on when the person picks
     /// none: its folder's, read and never copied (`folders::account_of`). Not
-    /// for a workspace its node runs: it has no folder level.
-    fn inherited_account<'a>(&self, m: &'a Model) -> Option<&'a str> {
+    /// for a workspace its node runs: it has no folder level. The account
+    /// picker offers it first (« Folder default (Pro) »), and « Default » is
+    /// then a choice of its own (`DEFAULT_CHOICE`).
+    pub(crate) fn inherited_account<'a>(&self, m: &'a Model) -> Option<&'a str> {
         if self.place.node.is_some() {
             return None;
         }
         folders::folder_account(self.target_folder(m)?)
-    }
-
-    /// What picking `id` in the account picker chooses, as the workspace
-    /// keeps it: « Default » inside a folder that names an account is the
-    /// person's default over the folder's (`DEFAULT_CHOICE`); anywhere else,
-    /// no choice of its own.
-    fn picked_account(&self, m: &Model, id: Option<String>) -> Option<String> {
-        match id {
-            None if self.inherited_account(m).is_some() => Some(DEFAULT_CHOICE.to_string()),
-            id => id,
-        }
-    }
-
-    /// What the account picker shows checked: the choice made, else the
-    /// folder's account the workspace will run on. (TODO(PR #20, phase 2):
-    /// the picker gets its own « Folder default (…) » line for that.)
-    pub(crate) fn shown_account<'a>(&'a self, m: &'a Model) -> Option<&'a str> {
-        match self.folder.claude_account.as_deref() {
-            Some(DEFAULT_CHOICE) => None,
-            None => self.inherited_account(m),
-            own => own,
-        }
     }
 }
 
@@ -705,7 +685,7 @@ fn form(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Account(id) => {
-            st.folder.claude_account = st.picked_account(m, id);
+            st.folder.claude_account = id;
             Task::none()
         }
         Msg::MoreOptions => {

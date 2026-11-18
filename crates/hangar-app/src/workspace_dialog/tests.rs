@@ -2222,10 +2222,10 @@ fn opened_from_a_folder_the_form_files_the_workspace_there_on_its_account() {
         st.target_folder(&h.model).map(|f| f.name.as_str()),
         Some("Games")
     );
-    // Nothing chosen: the picker shows the folder's account, the form keeps
-    // no choice of its own.
+    // Nothing chosen: the workspace reads the folder's account, the form
+    // keeps no choice of its own.
     assert_eq!(st.folder.claude_account, None);
-    assert_eq!(st.shown_account(&h.model), Some("perso"));
+    assert_eq!(st.inherited_account(&h.model), Some("perso"));
 
     let _ = form(&mut st, &mut h.model, Msg::Cwd("/home/me/dev/game".into()));
     let _ = submit_folder(&mut st, &mut h.model, &[]);
@@ -2239,30 +2239,32 @@ fn opened_from_a_folder_the_form_files_the_workspace_there_on_its_account() {
 fn the_default_picked_inside_a_folder_with_an_account_sticks() {
     let mut h = with_games(Some("perso"));
     let mut st = opened_in(&h, "games");
-    let _ = form(&mut st, &mut h.model, Msg::Account(None));
-    assert_eq!(st.folder.claude_account.as_deref(), Some(DEFAULT_CHOICE));
-    assert_eq!(st.shown_account(&h.model), None, "« Default » is checked");
+    // « Default (Principal) », under « Folder default (Perso) ».
+    let _ = form(
+        &mut st,
+        &mut h.model,
+        Msg::Account(Some(DEFAULT_CHOICE.into())),
+    );
     let _ = form(&mut st, &mut h.model, Msg::Cwd("/home/me/dev/game".into()));
     let _ = submit_folder(&mut st, &mut h.model, &[]);
     let ws = made(&h, "/home/me/dev/game");
     assert_eq!(ws.claude_account.as_deref(), Some(DEFAULT_CHOICE));
     assert_eq!(runs_on(&h, ws), "main", "the settings' default");
 
-    // Another account picked is that account.
+    // Back to « Folder default »: no choice of its own.
     let mut st = opened_in(&h, "games");
     let _ = form(&mut st, &mut h.model, Msg::Account(Some("pro".into())));
-    assert_eq!(st.folder.claude_account.as_deref(), Some("pro"));
-    assert_eq!(st.shown_account(&h.model), Some("pro"));
+    let _ = form(&mut st, &mut h.model, Msg::Account(None));
+    assert_eq!(st.folder.claude_account, None);
 }
 
 #[test]
-fn outside_a_folder_with_an_account_the_default_is_no_choice() {
-    let mut h = with_games(None);
-    for mut st in [State::default(), opened_in(&h, "games")] {
-        let _ = form(&mut st, &mut h.model, Msg::Account(None));
-        assert_eq!(st.folder.claude_account, None);
-        assert_eq!(st.shown_account(&h.model), None);
-    }
+fn a_workspace_for_a_node_reads_no_folder_account() {
+    let h = with_games(Some("perso"));
+    let mut st = opened_in(&h, "games");
+    // Its account is its machine's: no folder level to offer.
+    st.place.node = Some("n1".into());
+    assert_eq!(st.inherited_account(&h.model), None);
 }
 
 #[test]
@@ -2271,7 +2273,7 @@ fn opened_the_usual_way_the_form_files_nothing() {
     let mut st = opened_in(&h, "games");
     opened(&mut st);
     assert_eq!(st.in_folder, None);
-    assert_eq!(st.shown_account(&h.model), None);
+    assert_eq!(st.inherited_account(&h.model), None);
 }
 
 #[test]
@@ -2310,7 +2312,7 @@ fn a_clone_still_running_keeps_its_folder_when_another_folders_plus_is_clicked()
         st.target_folder(&h.model).map(|f| f.name.as_str()),
         Some("Games")
     );
-    assert_eq!(st.shown_account(&h.model), Some("perso"));
+    assert_eq!(st.inherited_account(&h.model), Some("perso"));
 }
 
 #[test]

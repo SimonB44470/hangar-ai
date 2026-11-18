@@ -17,9 +17,10 @@
 //! - the views: [`switcher`], [`pane_badge`], [`badge`], [`menu_items`],
 //!   [`workspace_picker`] and [`settings_page`], with the signatures the shell
 //!   fixed;
-//! - P5, when it launches a Claude Code pane: [`launch_account`] to know the
-//!   account to start it on, then `m.live.accounts.launched.note(pane,
-//!   Some(account))`; and `note(pane, None)` when the pane ends. A pane's
+//! - P5, when it launches a Claude Code pane: [`AccountLevels`] (pane,
+//!   workspace, the workspace's folder, default) to know the account to
+//!   start it on, then `m.live.accounts.launched.note(pane, Some(account))`;
+//!   and `note(pane, None)` when the pane ends. A pane's
 //!   usage counts against the account it was launched on, and "running" in
 //!   the switcher's question means "has noted an account".
 
@@ -51,12 +52,13 @@ use hangar_engine::accounts as model;
 
 #[allow(unused_imports)]
 pub use model::{
-    AccountId, AccountSource, ClaudeAccount, LOGIN_COMMAND, Launched, MAIN_ACCOUNT,
-    ResolvedAccount, launch_account, launch_account_with, read_account_choice, resolve_account,
+    AccountId, AccountLevels, AccountSource, ClaudeAccount, DEFAULT_CHOICE, LOGIN_COMMAND,
+    Launched, MAIN_ACCOUNT, ResolvedAccount, launch_account, launch_account_with,
+    read_account_choice, resolve_account,
 };
 pub use switch::{Follow, FollowInput, Job, Turn, follow};
 use switch::{
-    SwitchPane, SwitchWorkspace, Usage, UsageMeasure, merge_usage,
+    SwitchPane, SwitchWorkspace, Usage, UsageMeasure, follows_default, merge_usage,
     panes_to_restart_on_default_change, panes_to_restart_on_workspace_change, running_count,
     usage_by_account,
 };
@@ -184,8 +186,8 @@ pub enum Msg {
         pane: PaneId,
         id: Option<AccountId>,
     },
-    /// The account new workspaces of a navigator folder start on; `None`:
-    /// none, they follow the default.
+    /// The account of a navigator folder's workspaces that chose none of
+    /// their own; `None`: none, they follow the default.
     SetFolder {
         folder: String,
         id: Option<AccountId>,
@@ -522,12 +524,15 @@ fn record_usage(m: &mut Model, pane: &PaneId, event: &serde_json::Value, at: u64
 
 // ── switching ─────────────────────────────────────────────────────────
 
-/// A workspace as the switching logic reads it; `running` = a Claude Code is
-/// up in the pane.
-fn switch_workspace(workspace: &Workspace, live: &Live) -> SwitchWorkspace {
+/// A workspace as the switching logic reads it, with the account it reads
+/// from its folder; `running` = a Claude Code is up in the pane.
+fn switch_workspace(m: &Model, workspace: &Workspace) -> SwitchWorkspace {
+    let live = &m.live.accounts;
     SwitchWorkspace {
         id: workspace.id.clone(),
         claude_account: workspace.claude_account.clone(),
+        folder_account: crate::state::folders::account_of(&m.state().folders, workspace)
+            .map(str::to_string),
         panes: workspace
             .panes
             .iter()
@@ -553,7 +558,7 @@ fn switch_workspaces(m: &Model) -> Vec<SwitchWorkspace> {
     m.state()
         .workspaces
         .iter()
-        .map(|workspace| switch_workspace(workspace, &m.live.accounts))
+        .map(|workspace| switch_workspace(m, workspace))
         .collect()
 }
 
@@ -572,7 +577,7 @@ fn running_in(m: &Model, ws: &WsId, scope: SwitchScope) -> usize {
     match scope {
         SwitchScope::Workspace => m
             .workspace(ws)
-            .map(|workspace| switch_workspace(workspace, &m.live.accounts))
+            .map(|workspace| switch_workspace(m, workspace))
             .map_or(0, |workspace| {
                 running_count(&panes_to_restart_on_workspace_change(&workspace))
             }),
@@ -621,7 +626,7 @@ fn set_workspace_account(
     };
     // Which panes follow is decided before the change; ids survive it, and
     // the respawn re-resolves the account at launch.
-    let switch = switch_workspace(workspace, &m.live.accounts);
+    let switch = switch_workspace(m, workspace);
     let panes = running_ids(panes_to_restart_on_workspace_change(&switch));
     m.apply(StoreAction::UpdateWorkspace(
         ws.clone(),
@@ -638,7 +643,7 @@ fn set_default_account(m: &mut Model, id: AccountId, restart: bool) -> Task<Mess
     let workspaces = switch_workspaces(m);
     let affected: Vec<(WsId, Vec<PaneId>)> = workspaces
         .iter()
-        .filter(|workspace| read_account_choice(workspace.claude_account.as_deref()).is_none())
+        .filter(|workspace| follows_default(workspace))
         .map(|workspace| {
             (
                 workspace.id.clone(),
@@ -659,8 +664,11 @@ fn set_default_account(m: &mut Model, id: AccountId, restart: bool) -> Task<Mess
     )
 }
 
-/// The account a folder's new workspaces start on. Nothing restarts: the
-/// choice is for the workspaces to come, and those already filed keep theirs.
+/// The account of a folder's workspaces, those that chose none of their own
+/// (read at each launch, never copied). Nothing restarts here, as for a pick
+/// in a workspace's menu: their agents move on their next launch, or by
+/// themselves between turns when the person does not want to be asked
+/// (`follow`).
 fn set_folder_account(m: &mut Model, folder: String, id: Option<AccountId>) {
     m.apply(StoreAction::UpdateFolder(
         folder,
@@ -729,9 +737,15 @@ pub fn folder_menu_items<'a>(ctx: Ctx<'a>, folder: &'a str) -> Vec<MenuEntry> {
 }
 
 /// The workspace dialog's account picker. `value` is the account the
-/// workspace being made has chosen for itself (`None`: the default).
-pub fn workspace_picker<'a>(ctx: Ctx<'a>, value: Option<&'a str>) -> Element<'a, Message> {
-    picker::view(ctx, value)
+/// workspace being made has chosen for itself (`None`: none, it follows its
+/// folder's, else the default; `DEFAULT_CHOICE`: the default over the
+/// folder's), `folder` the account its folder names, if any.
+pub fn workspace_picker<'a>(
+    ctx: Ctx<'a>,
+    value: Option<&'a str>,
+    folder: Option<&'a str>,
+) -> Element<'a, Message> {
+    picker::view(ctx, value, folder)
 }
 
 /// Settings › Accounts (embedded by the settings).

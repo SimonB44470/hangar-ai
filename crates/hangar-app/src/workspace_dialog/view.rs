@@ -876,7 +876,11 @@ fn more_options<'a>(
         form = form.push(labelled(
             ctx,
             Some(ctx.t(Key::AccountsPickerLabel).into_owned()),
-            accounts::workspace_picker(ctx, st.shown_account(ctx.model)),
+            accounts::workspace_picker(
+                ctx,
+                st.folder.claude_account.as_deref(),
+                st.inherited_account(ctx.model),
+            ),
         ));
     }
 

@@ -8,7 +8,7 @@
 //! folder's menu has the same lines, for the account of its workspaces.
 
 use hangar_engine::accounts::{AccountLevels, DEFAULT_CHOICE};
-use hangar_i18n::{Key, Translator};
+use hangar_i18n::{Key, Translator, args};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
@@ -85,15 +85,17 @@ pub fn workspace_menu_items(
         chosen.select = Some(DEFAULT_CHOICE.to_string());
     }
     let unknown = t.t(Key::AccountsPickerUnknown);
+    let name = account_name(accounts, Some(folder), &unknown);
     items.insert(
         0,
         AccountMenuItem {
             key: "folder".into(),
-            // TODO(PR #20, phase 2): its own key, in English and French.
-            label: format!(
-                "Folder default ({})",
-                account_name(accounts, Some(folder), &unknown)
-            ),
+            label: t
+                .t_with(
+                    Key::AccountsPickerFolderDefault,
+                    &args!("name" => name.as_str()),
+                )
+                .into_owned(),
             checked: known_own.is_none() && !chose_default,
             select: None,
         },
@@ -112,9 +114,9 @@ fn radio(item: AccountMenuItem, pick: impl Fn(Option<String>) -> Message) -> Men
     }
 }
 
-/// The account lines of a navigator folder's menu: « None » first (its
-/// workspaces follow the default), then one per account, the folder's choice
-/// checked. The workspaces filed in it that chose no account of their
+/// The account lines of a navigator folder's menu: « Default (Perso) » first
+/// (its workspaces follow the default), then one per account, the folder's
+/// choice checked. The workspaces filed in it that chose no account of their
 /// own run on it, those moved in later too. Nothing before the accounts are
 /// known, nor with a single account, where there is nothing to choose.
 pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
@@ -130,39 +132,23 @@ pub fn folder_entries(ctx: Ctx<'_>, folder: &str) -> Vec<MenuEntry> {
     else {
         return Vec::new();
     };
-    let own = folders::folder_account(entry)
-        .filter(|own| accounts.iter().any(|account| account.id == *own));
-    let pick = |id: Option<String>| {
-        Message::Accounts(Msg::SetFolder {
-            folder: folder.to_string(),
-            id,
-        })
-    };
+    let items = account_menu_items(
+        ctx.i18n,
+        accounts,
+        ctx.model.settings().claude_account.as_deref(),
+        folders::folder_account(entry),
+    );
     let mut entries = vec![
         MenuEntry::Separator,
         MenuEntry::Heading(ctx.t(Key::AccountsMenuFolderTitle).into_owned()),
-        radio(
-            AccountMenuItem {
-                key: "none".into(),
-                // TODO(PR #20, phase 2): « Default (Perso) » (`default_label`),
-                // as the other menus say it, and a clearer heading.
-                label: ctx.t(Key::AccountsMenuFolderNone).into_owned(),
-                checked: own.is_none(),
-                select: None,
-            },
-            pick,
-        ),
     ];
-    entries.extend(accounts.iter().map(|account| {
-        radio(
-            AccountMenuItem {
-                key: account.id.clone(),
-                label: account.label.clone(),
-                checked: own == Some(account.id.as_str()),
-                select: Some(account.id.clone()),
-            },
-            pick,
-        )
+    entries.extend(items.into_iter().map(|item| {
+        radio(item, |id| {
+            Message::Accounts(Msg::SetFolder {
+                folder: folder.to_string(),
+                id,
+            })
+        })
     }));
     entries
 }

@@ -646,14 +646,14 @@ fn no_entries_before_the_accounts_are_known() {
 #[test]
 fn a_picker_whose_account_is_gone_says_the_default_applies() {
     let h = Harness::new(Locale::En, "graphite");
-    let mut ui = h.show(workspace_picker(h.ctx(), Some("gone")));
+    let mut ui = h.show(workspace_picker(h.ctx(), Some("gone"), None));
     assert!(
         ui.find("The account \u{201c}gone\u{201d} no longer exists: the default applies.")
             .is_ok()
     );
-    let mut ui = h.show(workspace_picker(h.ctx(), Some("perso")));
+    let mut ui = h.show(workspace_picker(h.ctx(), Some("perso"), None));
     assert!(ui.find("no longer exists").is_err());
-    let mut ui = h.show(workspace_picker(h.ctx(), None));
+    let mut ui = h.show(workspace_picker(h.ctx(), None, None));
     assert!(ui.find("no longer exists").is_err());
 }
 
@@ -1422,7 +1422,7 @@ fn a_renamed_account_keeps_its_badge_and_a_removed_one_takes_it_along() {
 // ── a navigator folder's account ──────────────────────────────────────
 
 #[test]
-fn a_folders_menu_offers_none_and_every_account_with_its_choice_checked() {
+fn a_folders_menu_offers_the_default_and_every_account_with_its_choice_checked() {
     let h = Harness::new(Locale::En, "graphite").edit(|state| {
         state.folders = vec![crate::state::types::WorkspaceFolder {
             id: "games".into(),
@@ -1436,8 +1436,8 @@ fn a_folders_menu_offers_none_and_every_account_with_its_choice_checked() {
         labels(&entries),
         [
             "---",
-            "# Account for its new workspaces",
-            "None (the default)",
+            "# Claude account for this folder",
+            "Default (Principal)",
             "Principal",
             "✓ Perso",
             "Travail",
@@ -1459,5 +1459,76 @@ fn choosing_a_folders_account_keeps_it_and_restarts_nothing() {
     assert_eq!(
         h.model.state().folders[0].claude_account.as_deref(),
         Some("pro")
+    );
+}
+
+#[test]
+fn a_removed_account_is_forgotten_by_the_folders_that_named_it_too() {
+    let mut h = Harness::new(Locale::En, "graphite").edit(|state| {
+        state.folders = vec![
+            crate::state::types::WorkspaceFolder {
+                id: "games".into(),
+                name: "Games".into(),
+                claude_account: Some("perso".into()),
+                ..Default::default()
+            },
+            crate::state::types::WorkspaceFolder {
+                id: "work".into(),
+                name: "Work".into(),
+                claude_account: Some("pro".into()),
+                ..Default::default()
+            },
+        ];
+    });
+    let mut page = Page::default();
+    page.busy = true;
+    let _ = settings_page::step(
+        &mut page,
+        &mut h.model,
+        Msg::Removed("perso".into(), Ok(())),
+    );
+    let folders = &h.model.state().folders;
+    assert_eq!(folders[0].claude_account, None);
+    assert_eq!(folders[1].claude_account.as_deref(), Some("pro"));
+}
+
+#[test]
+fn a_workspace_on_its_folders_account_shows_it_in_its_menu_and_its_panes_follow_it() {
+    let h = Harness::new(Locale::En, "graphite").edit(|state| {
+        state.folders = vec![crate::state::types::WorkspaceFolder {
+            id: "games".into(),
+            name: "Games".into(),
+            claude_account: Some("pro".into()),
+            ..Default::default()
+        }];
+        state.workspaces[0].folder_id = Some("games".into());
+    });
+    let w = ws("w1");
+    assert_eq!(
+        labels(&menu_items(h.ctx(), &w, None)),
+        [
+            "---",
+            "# Claude account",
+            "✓ Folder default (Travail)",
+            "Default (Principal)",
+            "Principal",
+            "Perso",
+            "Travail"
+        ]
+    );
+    // « Default » here is a choice: the settings' default over the folder's.
+    let entries = menu_items(h.ctx(), &w, None);
+    let MenuEntry::Item { on_select, .. } = &entries[3] else {
+        panic!("an item");
+    };
+    assert!(matches!(
+        on_select,
+        Message::Accounts(Msg::SetWorkspace { ws, id: Some(id), restart: false })
+            if ws == "w1" && id == DEFAULT_CHOICE
+    ));
+    // Its Claude pane's « Default » is what the workspace runs on.
+    assert_eq!(
+        labels(&menu_items(h.ctx(), &w, Some(&"p1".to_string())))[2],
+        "✓ Default (Travail)"
     );
 }

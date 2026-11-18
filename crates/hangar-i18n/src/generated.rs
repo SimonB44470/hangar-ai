@@ -14,10 +14,10 @@ use crate::dictionary::{Message, Text};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[repr(u16)]
 pub enum Key {
+    /// `accounts.badge.folderTitle`
+    AccountsBadgeFolderTitle,
     /// `accounts.badge.title`
     AccountsBadgeTitle,
-    /// `accounts.menu.folderNone`
-    AccountsMenuFolderNone,
     /// `accounts.menu.folderTitle`
     AccountsMenuFolderTitle,
     /// `accounts.menu.title`
@@ -50,6 +50,8 @@ pub enum Key {
     AccountsPaneMenuHeading,
     /// `accounts.picker.default`
     AccountsPickerDefault,
+    /// `accounts.picker.folderDefault`
+    AccountsPickerFolderDefault,
     /// `accounts.picker.label`
     AccountsPickerLabel,
     /// `accounts.picker.missing`
@@ -4519,13 +4521,13 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2251;
+pub const KEY_COUNT: usize = 2252;
 
 impl Key {
     /// Every key, in the order of their ids.
     pub const ALL: [Key; KEY_COUNT] = [
+        Key::AccountsBadgeFolderTitle,
         Key::AccountsBadgeTitle,
-        Key::AccountsMenuFolderNone,
         Key::AccountsMenuFolderTitle,
         Key::AccountsMenuTitle,
         Key::AccountsMovedNote,
@@ -4542,6 +4544,7 @@ impl Key {
         Key::AccountsPaneBadgeTitle,
         Key::AccountsPaneMenuHeading,
         Key::AccountsPickerDefault,
+        Key::AccountsPickerFolderDefault,
         Key::AccountsPickerLabel,
         Key::AccountsPickerMissing,
         Key::AccountsPickerUnknown,
@@ -6780,9 +6783,9 @@ impl Key {
 
 /// The messages, sorted by id (byte order), one per `Key`.
 pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
+    Message { id: "accounts.badge.folderTitle", en: Text::plain("Claude account: {name}, from the {folder} folder"), fr: Text::plain("Compte Claude\u{202f}: {name}, celui du dossier {folder}") },
     Message { id: "accounts.badge.title", en: Text::plain("Claude account: {name}"), fr: Text::plain("Compte Claude\u{202f}: {name}") },
-    Message { id: "accounts.menu.folderNone", en: Text::plain("None (the default)"), fr: Text::plain("Aucun (le défaut)") },
-    Message { id: "accounts.menu.folderTitle", en: Text::plain("Account for its new workspaces"), fr: Text::plain("Compte de ses nouveaux workspaces") },
+    Message { id: "accounts.menu.folderTitle", en: Text::plain("Claude account for this folder"), fr: Text::plain("Compte Claude de ce dossier") },
     Message { id: "accounts.menu.title", en: Text::plain("Claude account"), fr: Text::plain("Compte Claude") },
     Message { id: "accounts.movedNote", en: Text::plain("Now on {name}, same conversation."), fr: Text::plain("Maintenant sur {name}, même conversation.") },
     Message { id: "accounts.movedNoteFresh", en: Text::plain("Now on {name}, on a new conversation."), fr: Text::plain("Maintenant sur {name}, sur une nouvelle conversation.") },
@@ -6798,6 +6801,7 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.pane.badgeTitle", en: Text::plain("This agent runs on the “{name}” account, not its workspace’s"), fr: Text::plain("Cet agent tourne sur le compte «\u{202f}{name}\u{202f}», pas celui de son workspace") },
     Message { id: "accounts.pane.menuHeading", en: Text::plain("Claude account for this pane"), fr: Text::plain("Compte Claude de ce volet") },
     Message { id: "accounts.picker.default", en: Text::plain("Default ({name})"), fr: Text::plain("Par défaut ({name})") },
+    Message { id: "accounts.picker.folderDefault", en: Text::plain("Folder default ({name})"), fr: Text::plain("Défaut du dossier ({name})") },
     Message { id: "accounts.picker.label", en: Text::plain("Claude account"), fr: Text::plain("Compte Claude") },
     Message { id: "accounts.picker.missing", en: Text::plain("The account “{id}” no longer exists: the default applies."), fr: Text::plain("Le compte «\u{202f}{id}\u{202f}» n’existe plus\u{202f}: le compte par défaut s’applique.") },
     Message { id: "accounts.picker.unknown", en: Text::plain("unknown"), fr: Text::plain("inconnu") },
