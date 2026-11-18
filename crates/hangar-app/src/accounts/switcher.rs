@@ -8,6 +8,11 @@
 //! the click first asks whether to restart them now (their conversations are
 //! kept) or on their next launch.
 //!
+//! The button and each row draw the account in the tone and with the icon
+//! chosen for it (`account_style`), the default account included: the
+//! navigator and the pane headers only name an account other than the
+//! default, so this is where the default's own colour shows.
+//!
 //! Switching is always this click: nothing here rotates accounts by itself.
 //! The email of an account is in the tooltip of its row and appears nowhere
 //! else.
@@ -22,11 +27,13 @@ use iced::{Alignment, Element, Length, Padding};
 
 use crate::ctx::Ctx;
 use crate::message::Message;
+use crate::navigator::plan::{shown_pct, window_label};
+use crate::panes_logic::wall_clock_ms;
 use crate::state::WsId;
 
 use super::model::{AccountId, ClaudeAccount, resolve_account};
-use super::switch::{AccountUsage, account_name, usage_percent};
-use super::{Msg, State, live};
+use super::switch::{AccountUsage, FIVE_HOUR, WEEKLY, account_name};
+use super::{Msg, State, account_style, live};
 
 /// What a click on a row changes: the workspace on screen (the main action),
 /// or the default every workspace without an account of its own follows.
@@ -95,17 +102,20 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
             .wrapping(Wrapping::None),
     )
     .max_width(120.0);
+    // The account's own icon and tone when it has them, the bolt otherwise.
+    let mark = account_style::of(ctx, &current);
+    let glyph = icon(mark.icon.unwrap_or(Icon::Bolt), tokens::size::ICON);
+    let glyph = match mark.tone {
+        Some(tone) => glyph.color(account_style::ink(t, tone)),
+        None => glyph,
+    };
     // Centred in the button's height, level with the toolbar's other
     // buttons: a button lays its content out from the top.
     let anchor = button(
         container(
-            row![
-                icon(Icon::Bolt, tokens::size::ICON),
-                label,
-                icon(Icon::ChevronDown, 12.0),
-            ]
-            .spacing(tokens::space::SM)
-            .align_y(Alignment::Center),
+            row![glyph, label, icon(Icon::ChevronDown, 12.0)]
+                .spacing(tokens::space::SM)
+                .align_y(Alignment::Center),
         )
         .center_y(Length::Fill),
     )
@@ -137,25 +147,36 @@ pub fn view<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
         .into()
 }
 
+/// What is known of an account's limits, one window after the other as the
+/// plan block draws them (`plan::limits`: a gateway's windows too, and a
+/// window past its reset empty), or a single word when nothing is: a window
+/// never reported is left out rather than called « unknown ».
 fn usage_line(t: Translator, usage: Option<&AccountUsage>) -> String {
-    let show = |value: Option<u8>| match value {
-        None => t.t(Key::AccountsSwitcherUnknown).into_owned(),
-        Some(n) => t
-            .t_with(Key::AccountsSwitcherPercent, &args!("n" => n))
-            .into_owned(),
-    };
-    let five = t.t(Key::AccountsSwitcherFive);
-    let week = t.t(Key::AccountsSwitcherWeek);
-    t.t_with(
-        Key::AccountsSwitcherUsage,
-        &args!(
-            "five" => five.as_ref(),
-            "fiveValue" => show(usage_percent(usage.and_then(|u| u.five_hour.as_ref()))),
-            "week" => week.as_ref(),
-            "weekValue" => show(usage_percent(usage.and_then(|u| u.weekly.as_ref()))),
-        ),
-    )
-    .into_owned()
+    let now = i64::try_from(wall_clock_ms()).unwrap_or_default();
+    let windows = usage.map(super::plan::limits).unwrap_or_default();
+    if windows.is_empty() {
+        return t.t(Key::AccountsSwitcherNoFigures).into_owned();
+    }
+    windows
+        .iter()
+        .map(|limit| {
+            let name = match limit.kind.as_str() {
+                FIVE_HOUR => t.t(Key::AccountsSwitcherFive).into_owned(),
+                WEEKLY => t.t(Key::AccountsSwitcherWeek).into_owned(),
+                other => window_label(t, other),
+            };
+            let value = t.t_with(
+                Key::AccountsSwitcherPercent,
+                &args!("n" => shown_pct(limit, now)),
+            );
+            t.t_with(
+                Key::AccountsSwitcherWindow,
+                &args!("window" => name.as_str(), "value" => value.as_ref()),
+            )
+            .into_owned()
+        })
+        .collect::<Vec<_>>()
+        .join(" · ")
 }
 
 /// The list: a heading and a row per account.
@@ -200,20 +221,38 @@ fn account_row<'a>(
     } else {
         Space::new().width(tokens::size::ICON).into()
     };
-    let mut name = row![text(account.label.as_str()).size(tokens::font_size::BODY)];
-    if !account.logged_in {
-        name = name.push(
-            text(format!(" · {}", ctx.t(Key::AccountsSwitcherNotLoggedIn)))
-                .size(tokens::font_size::BODY)
-                .style(style::text::muted(t)),
-        );
-    }
+    // The name in the tone and with the icon chosen for the account, if
+    // any (`account_style`).
+    let marked = account_style::of(ctx, &account.id);
+    let name: Element<'a, Message> = if marked.is_plain() {
+        text(account.label.as_str())
+            .size(tokens::font_size::BODY)
+            .wrapping(text::Wrapping::None)
+            .into()
+    } else {
+        account_style::label(
+            t,
+            marked,
+            account.label.clone(),
+            tokens::font_size::BODY,
+            None,
+        )
+    };
+    // Not logged in says so on the second line, where the figures would be:
+    // the name keeps its line whatever the language.
+    let detail = if account.logged_in {
+        usage_line(ctx.i18n, usage)
+    } else {
+        ctx.t(Key::AccountsSwitcherNotLoggedIn).into_owned()
+    };
     let lines = column![
-        name,
-        text(usage_line(ctx.i18n, usage))
+        container(name).width(Length::Fill).clip(true),
+        text(detail)
             .size(tokens::font_size::LABEL)
             .style(style::text::muted(t)),
-    ];
+    ]
+    .spacing(tokens::space::XXS)
+    .width(Length::Fill);
     let main = button(
         row![mark, lines]
             .spacing(tokens::space::MD)

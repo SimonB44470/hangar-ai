@@ -22,10 +22,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use hangar_core::kits::{KitInfo, LaunchIssue};
+use hangar_core::pty::PaneJob;
 use hangar_i18n::{Key, Locale, Translator, args};
 use hangar_term::Terminal;
 use iced::Task;
 
+use crate::accounts::{Follow, FollowInput, Hold, Job, Turn, follow};
 use crate::kits::model::{
     KitLaunchIssue, LaunchReason, PaneKits, kit_issue_notes, load_pane_kits_with,
 };
@@ -39,7 +41,7 @@ use crate::panes_logic::Msg as Logic;
 use crate::panes_logic::agents::{LaunchOptions, is_resumable, known_session_ids, launch_command};
 use crate::panes_logic::shells::resolve_shell;
 use crate::services::{CoreEvent, Services};
-use crate::state::live::{PaneMcp, PaneMcpMode, PaneStatus};
+use crate::state::live::{PaneEventDetail, PaneMcp, PaneMcpMode, PaneStatus};
 use crate::state::roles::{ORCHESTRATION_ALLOWED_TOOLS, orchestration_of};
 use crate::state::types::{AgentId, McpMode, Pane, PaneRole, Settings, ShellInfo, Workspace};
 use crate::state::{Model, PaneId, Patch, StoreAction, WsId};
@@ -100,6 +102,19 @@ pub struct PaneRt {
     pub launched_role: Option<PaneRole>,
     /// The restart a role asked for was dealt with, once per pin.
     pub role_handled: bool,
+    /// The account a move was started for (`accounts::follow`), handed to
+    /// the pane the move's restart makes (`Intent::PaneRespawned`): a launch
+    /// core had to put on another account is not restarted again.
+    pub moved_to: Option<String>,
+    /// Its launch is a move to another account: its conversation is resumed
+    /// whatever `auto_resume` says, and its note says where it landed.
+    pub moved: bool,
+    /// When the person last put something in its prompt between two turns
+    /// (typed, pasted, dropped, or dictated without sending it): a restart
+    /// would lose it. Cleared by the next turn, which means it was sent.
+    pub drafted_at: Option<Instant>,
+    /// Where its move to another account stands between two looks.
+    pub follow: FollowRt,
     /// The spawn, while the terminal has not measured itself yet or the
     /// machine's shells are not known yet.
     pending: Option<Spawn>,
@@ -485,6 +500,10 @@ pub fn mount(
         mcp: None,
         launched_role: pane.role,
         role_handled: false,
+        moved_to: None,
+        moved: false,
+        drafted_at: None,
+        follow: FollowRt::default(),
         pending: Some(spawn),
         start_due: false,
         resume: None,
@@ -1028,7 +1047,9 @@ pub fn spawned(
     // says: a sleep stops an agent to free memory, and must not cost a
     // conversation.
     let owed = m.live.panes_logic.must_resume(&id, false);
-    let saved = (auto_resume || owed)
+    // A move to another account keeps the conversation whatever the setting
+    // says: the person chose an account, not a new conversation.
+    let saved = (auto_resume || owed || rt.moved)
         .then(|| pane.session_id.clone())
         .flatten()
         .filter(|_| is_resumable(rt.agent));
@@ -1210,6 +1231,13 @@ pub fn launch_ready(
             );
         }
         resume = None;
+    }
+    // Said once it is known whether the conversation came along: a session
+    // with no id yet, or whose transcript is not found, starts afresh.
+    if rt.moved {
+        rt.moved = false;
+        let note = moved_note(m, rt.account.as_deref(), resume.is_some());
+        rt.notes.push(note);
     }
     let settings = m.settings();
     let (permission_mode, tools) = role_flags(&ws, &pane);
@@ -1439,6 +1467,292 @@ pub fn role_check(rt: &mut PaneRt, m: &Model, locale: Locale) -> Task<Message> {
     }
 }
 
+/// How long what the person put in a pane's prompt and did not send holds a
+/// move back: past it, the draft reads as given up (a prompt cleared with
+/// Ctrl+C, a window left with a word typed). Claude Code keeps no draft
+/// across a restart, so this errs long; the header says meanwhile that the
+/// pane waits.
+pub const DRAFT_HOLD: Duration = Duration::from_secs(90);
+
+/// How long a pane waiting to move, whose agent has a command of its own
+/// running below it (or whose process table could not be read), waits
+/// before it is asked again.
+pub const JOB_RECHECK: Duration = Duration::from_secs(15);
+
+/// Where a pane's move to another account stands between two looks
+/// (`account_follow`).
+#[derive(Debug, Default)]
+pub struct FollowRt {
+    /// The last look found it waiting to move: its turn, which it waits on,
+    /// is part of the panes' signature, so that the turn's end looks again.
+    pub pending: bool,
+    /// Asked whether a command of its own runs: the answer is on its way.
+    checking: bool,
+    /// The last answer found one running, or could not tell: not asked
+    /// again before this.
+    ask_after: Option<Instant>,
+    /// What that answer found, which the header says meanwhile.
+    busy: Option<Hold>,
+    /// The look a timer is set for: a draft that will read as given up, a
+    /// command to ask about again.
+    wake: Option<Instant>,
+}
+
+/// What a look at a pane's account asks of the panes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FollowStep {
+    Nothing,
+    /// Ask whether a command its agent started still runs below its shell
+    /// (`hangar_core::pty::pane_job`, off the UI thread).
+    Ask,
+    /// Look at it again at this instant (`Msg::FollowWake`).
+    Wake(Instant),
+    /// Restart it on its conversation: it moves.
+    Restart,
+}
+
+/// What a look at a pane's account found (`account_follow`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FollowLook {
+    pub verdict: Follow,
+    /// The account it is about.
+    pub to: String,
+    /// What the panes are to do.
+    pub step: FollowStep,
+    /// What holds its move back, which its header says; `None` when there
+    /// is no move to wait for.
+    pub hold: Option<Hold>,
+}
+
+/// Whether the person put something in the pane's prompt since its last
+/// turn, recently enough to count as a draft still being written.
+pub fn drafting(rt: &PaneRt, now: Instant) -> bool {
+    rt.drafted_at
+        .is_some_and(|at| now.saturating_duration_since(at) < DRAFT_HOLD)
+}
+
+/// The person put something in the pane's prompt (typed, pasted, dropped,
+/// or dictated without sending it): between two turns, a draft a restart
+/// would lose; inside one, an answer.
+pub fn drafted(rt: &mut PaneRt, m: &Model, now: Instant) {
+    if !m.live.panes_logic.is_mid_turn(&rt.link.id) {
+        rt.drafted_at = Some(now);
+    }
+}
+
+/// Where the pane's agent stands in its turns, as its hangar-bridge mod
+/// reports it: without the mod, its state is a guess read off the screen,
+/// which is no ground for a restart.
+pub fn turn_of(m: &Model, pane: &str) -> Turn {
+    let logic = &m.live.panes_logic;
+    match logic.pane_activity(pane) {
+        Some(entry) if entry.bridged && logic.is_mid_turn(pane) => Turn::Inside,
+        Some(entry) if entry.bridged => Turn::Between,
+        _ => Turn::Unknown,
+    }
+}
+
+/// When the pane's agent last started a turn, as its mod reported it: a
+/// different answer later means a turn started (and may have ended) in
+/// between.
+pub type TurnMark = Option<u64>;
+
+/// The pane's `TurnMark` now: the time of the last turn start its mod
+/// reported.
+pub fn turn_mark(m: &Model, pane: &str) -> TurnMark {
+    m.live
+        .panes_logic
+        .insight(pane)
+        .events
+        .iter()
+        .find(|event| matches!(event.detail, PaneEventDetail::TurnStart))
+        .map(|event| event.at)
+}
+
+/// Whether `rt` is a pane an account moves: a running Claude Code of this
+/// computer, not opened to log in. Not a pane on a node, whether the node
+/// runs it itself, its workspace lives there or it is a worker sent there:
+/// its Claude Code starts on the node's login, never on an account of this
+/// computer.
+pub fn movable(rt: &PaneRt, pane: &Pane) -> bool {
+    rt.agent == AgentId::Claude
+        && !rt.hosted
+        && rt.link.node().is_none()
+        && pane.login != Some(true)
+        && rt.status == PaneStatus::Running
+}
+
+/// The account `pane` of `ws` should run on now (pane > workspace >
+/// default), and whether it is logged in (`None` when it is not listed);
+/// nothing while the accounts are not known.
+pub fn wanted_account(m: &Model, ws: &Workspace, pane: &Pane) -> Option<(String, Option<bool>)> {
+    let accounts = m.live.accounts.accounts.as_deref()?;
+    let wanted = crate::accounts::resolve_account(
+        accounts,
+        m.settings().claude_account.as_deref(),
+        ws.claude_account.as_deref(),
+        pane.claude_account.as_deref(),
+    );
+    let logged_in = accounts
+        .iter()
+        .find(|account| account.id == wanted.id)
+        .map(|account| account.logged_in);
+    Some((wanted.id, logged_in))
+}
+
+/// Looks at whether a running Claude Code is to move to the account it
+/// should now run on, by itself, when the person does not want to be asked
+/// (`Settings::account_switch_ask` off): it moves, on its conversation, once
+/// Hangar knows it has nothing to lose (`accounts::follow`). `job` is what
+/// is known of the commands its agent started: `Unasked` but from the
+/// answer to `FollowStep::Ask` (`job_answered`).
+pub fn account_follow(rt: &mut PaneRt, m: &Model, now: Instant, job: Job) -> FollowLook {
+    rt.follow.pending = false;
+    let stay = FollowLook {
+        verdict: Follow::Stay,
+        to: String::new(),
+        step: FollowStep::Nothing,
+        hold: None,
+    };
+    if m.settings().account_switch_ask {
+        return stay;
+    }
+    let id = rt.link.id.clone();
+    let Some((ws, pane)) = find(m, &rt.ws, &id) else {
+        return stay;
+    };
+    let Some((wanted, wanted_logged_in)) = wanted_account(m, ws, pane) else {
+        return stay;
+    };
+    let turn = turn_of(m, &id);
+    // A turn begun means what was typed was sent.
+    if turn == Turn::Inside {
+        rt.drafted_at = None;
+    }
+    let verdict = follow(&FollowInput {
+        movable: movable(rt, pane),
+        launched: rt.account.as_deref(),
+        wanted: &wanted,
+        wanted_logged_in,
+        tried: rt.moved_to.as_deref(),
+        turn,
+        drafting: drafting(rt, now),
+        job,
+    });
+    rt.follow.pending = verdict.pending();
+    let step = match verdict {
+        Follow::Now => {
+            rt.moved_to = Some(wanted.clone());
+            FollowStep::Restart
+        }
+        Follow::Check if rt.follow.checking => FollowStep::Nothing,
+        Follow::Check => match rt.follow.ask_after.filter(|at| *at > now) {
+            Some(at) => wake(rt, at, now),
+            None => {
+                rt.follow.checking = true;
+                FollowStep::Ask
+            }
+        },
+        Follow::AfterJob => {
+            let at = now + JOB_RECHECK;
+            rt.follow.ask_after = Some(at);
+            wake(rt, at, now)
+        }
+        Follow::AfterDraft => match rt.drafted_at {
+            Some(at) => wake(rt, at + DRAFT_HOLD, now),
+            None => FollowStep::Nothing,
+        },
+        // Its turn's end, or its mod's first report, changes the panes'
+        // signature: the sync looks again then. What a turn runs is asked
+        // afresh after it.
+        Follow::AfterTurn => {
+            rt.follow.ask_after = None;
+            rt.follow.busy = None;
+            FollowStep::Nothing
+        }
+        Follow::Stay | Follow::NotLoggedIn => FollowStep::Nothing,
+    };
+    if matches!(verdict, Follow::Now | Follow::Stay | Follow::NotLoggedIn) {
+        rt.follow.ask_after = None;
+        rt.follow.busy = None;
+    }
+    let hold = match verdict {
+        Follow::Stay | Follow::Now => None,
+        Follow::NotLoggedIn => Some(Hold::NotLoggedIn),
+        Follow::AfterTurn if turn == Turn::Unknown => Some(Hold::Unreported),
+        Follow::AfterTurn => Some(Hold::Turn),
+        Follow::AfterDraft => Some(Hold::Draft),
+        Follow::Check | Follow::AfterJob => Some(rt.follow.busy.clone().unwrap_or(Hold::Checking)),
+    };
+    FollowLook {
+        verdict,
+        to: wanted,
+        step,
+        hold,
+    }
+}
+
+/// A look at `at`, unless one is set already for then or before (it looks
+/// again, and sets the next one).
+fn wake(rt: &mut PaneRt, at: Instant, now: Instant) -> FollowStep {
+    if rt.follow.wake.is_some_and(|set| (now..=at).contains(&set)) {
+        return FollowStep::Nothing;
+    }
+    rt.follow.wake = Some(at);
+    FollowStep::Wake(at)
+}
+
+/// The timer set for `at` went off.
+pub fn woke(rt: &mut PaneRt, at: Instant) {
+    if rt.follow.wake == Some(at) {
+        rt.follow.wake = None;
+    }
+}
+
+/// The answer to `FollowStep::Ask` came, asked when the agent's last turn
+/// had started at `mark`: what it tells of the commands the agent runs, for
+/// `account_follow`. A turn started since makes it stale (it may even have
+/// ended while the process table was read): it is asked again.
+pub fn job_answered(rt: &mut PaneRt, m: &Model, mark: TurnMark, answer: PaneJob) -> Job {
+    rt.follow.checking = false;
+    if turn_mark(m, &rt.link.id) != mark {
+        return Job::Unasked;
+    }
+    let (job, busy) = match answer {
+        PaneJob::Nothing => (Job::Nothing, None),
+        PaneJob::Running(what) => (Job::Busy, Some(Hold::Command(what))),
+        PaneJob::Unknown => (Job::Busy, Some(Hold::Unreadable)),
+    };
+    rt.follow.busy = busy;
+    job
+}
+
+/// The pane is the one a move to another account restarted: the account,
+/// when known, is remembered against a launch core had to put elsewhere,
+/// and its conversation is resumed.
+pub fn moved_in(rt: &mut PaneRt, account: Option<String>) {
+    if account.is_some() {
+        rt.moved_to = account;
+    }
+    rt.moved = true;
+}
+
+/// What a pane moved to another account says as it starts there: the
+/// account core started it on, and whether its conversation came along.
+fn moved_note(m: &Model, account: Option<&str>, resumed: bool) -> String {
+    let accounts = m.live.accounts.accounts.as_deref().unwrap_or(&[]);
+    let id = account.unwrap_or(crate::accounts::MAIN_ACCOUNT);
+    let name = crate::accounts::account_label(accounts, id);
+    let key = if resumed {
+        Key::AccountsMovedNote
+    } else {
+        Key::AccountsMovedNoteFresh
+    };
+    Translator::new(m.locale())
+        .t_with(key, &args!("name" => name.as_str()))
+        .into_owned()
+}
+
 /// The session the restart for a role was to resume exists, or not.
 pub fn role_restart_answered(
     rt: &PaneRt,
@@ -1487,6 +1801,10 @@ pub(crate) fn mounted(ws: &Workspace, pane: &Pane) -> PaneRt {
         mcp: None,
         launched_role: pane.role,
         role_handled: false,
+        moved_to: None,
+        moved: false,
+        drafted_at: None,
+        follow: FollowRt::default(),
         pending: None,
         start_due: false,
         resume: None,
@@ -1518,6 +1836,343 @@ mod tests {
             .build()
             .expect("runtime")
             .block_on(future)
+    }
+
+    /// The verdict, the step and what the header says of a look at a pane
+    /// that is to move to `perso`.
+    fn look_at(
+        rt: &mut PaneRt,
+        m: &Model,
+        at: Instant,
+        job: Job,
+    ) -> (Follow, FollowStep, Option<Hold>) {
+        let look = account_follow(rt, m, at, job);
+        assert_eq!(look.to, "perso");
+        (look.verdict, look.step, look.hold)
+    }
+
+    /// A Claude Code agent moves by itself to the account its workspace now
+    /// uses, on its conversation, and only once Hangar knows it has nothing
+    /// to lose: its turn over as its mod reports it, nothing typed in its
+    /// prompt, no command of its own running. Whatever is not known waits,
+    /// says why in the header, and is looked at again on a timer, never on
+    /// every update.
+    #[test]
+    fn an_agent_moves_only_once_hangar_knows_it_has_nothing_to_lose() {
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+
+        let mut h = Harness::new(Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        let now = Instant::now();
+
+        // No mod has reported: its turn is a guess off the screen.
+        assert_eq!(
+            look_at(&mut rt, &h.model, now, Job::Unasked),
+            (
+                Follow::AfterTurn,
+                FollowStep::Nothing,
+                Some(Hold::Unreported)
+            )
+        );
+        assert!(rt.follow.pending, "its header says it is to move");
+        // In a turn, or waiting on the person: after it.
+        for busy in [AgentActivity::Working, AgentActivity::Waiting] {
+            h.model.live.panes_logic.seed_activity("p1", "w1", busy);
+            assert_eq!(
+                look_at(&mut rt, &h.model, now, Job::Unasked),
+                (Follow::AfterTurn, FollowStep::Nothing, Some(Hold::Turn))
+            );
+        }
+        // The turn is over, but the person typed a prompt not sent yet: a
+        // look is set for when it reads as given up, once.
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        rt.drafted_at = Some(now);
+        let expiry = now + DRAFT_HOLD;
+        assert_eq!(
+            look_at(&mut rt, &h.model, now, Job::Unasked),
+            (
+                Follow::AfterDraft,
+                FollowStep::Wake(expiry),
+                Some(Hold::Draft)
+            )
+        );
+        assert_eq!(
+            look_at(&mut rt, &h.model, now, Job::Unasked).1,
+            FollowStep::Nothing
+        );
+        // The draft given up: whether a command of its own runs is asked,
+        // once.
+        woke(&mut rt, expiry);
+        assert_eq!(
+            look_at(&mut rt, &h.model, expiry, Job::Unasked),
+            (Follow::Check, FollowStep::Ask, Some(Hold::Checking))
+        );
+        assert_eq!(
+            look_at(&mut rt, &h.model, expiry, Job::Unasked).1,
+            FollowStep::Nothing
+        );
+        // A build runs below it: the header names it, and it is asked again
+        // later.
+        let mark = turn_mark(&h.model, "p1");
+        let build = Hold::Command("cargo build --release".into());
+        let job = job_answered(
+            &mut rt,
+            &h.model,
+            mark,
+            PaneJob::Running("cargo build --release".into()),
+        );
+        assert_eq!(job, Job::Busy);
+        let again = expiry + JOB_RECHECK;
+        assert_eq!(
+            look_at(&mut rt, &h.model, expiry, job),
+            (
+                Follow::AfterJob,
+                FollowStep::Wake(again),
+                Some(build.clone())
+            )
+        );
+        // Another update meanwhile asks nothing, and still names it.
+        assert_eq!(
+            look_at(&mut rt, &h.model, expiry, Job::Unasked),
+            (Follow::Check, FollowStep::Nothing, Some(build))
+        );
+        woke(&mut rt, again);
+        assert_eq!(
+            look_at(&mut rt, &h.model, again, Job::Unasked).1,
+            FollowStep::Ask
+        );
+        // A process table that cannot be read is as good as a command.
+        let job = job_answered(&mut rt, &h.model, mark, PaneJob::Unknown);
+        assert_eq!(job, Job::Busy);
+        assert_eq!(
+            look_at(&mut rt, &h.model, again, job).2,
+            Some(Hold::Unreadable)
+        );
+        let last = again + JOB_RECHECK;
+        woke(&mut rt, last);
+        assert_eq!(
+            look_at(&mut rt, &h.model, last, Job::Unasked).1,
+            FollowStep::Ask
+        );
+        // Nothing runs any more: it moves.
+        let job = job_answered(&mut rt, &h.model, mark, PaneJob::Nothing);
+        assert_eq!(
+            look_at(&mut rt, &h.model, last, job),
+            (Follow::Now, FollowStep::Restart, None)
+        );
+        assert_eq!(rt.moved_to.as_deref(), Some("perso"));
+        assert!(!rt.follow.pending);
+        // Started for perso: not again, even if core had to fall back.
+        assert_eq!(
+            look_at(&mut rt, &h.model, last, Job::Nothing),
+            (Follow::Stay, FollowStep::Nothing, None)
+        );
+
+        // An account not logged in: the pane stays, and says why.
+        let mut h = h.edit(|state| state.workspaces[0].claude_account = Some("pro".into()));
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        let look = account_follow(&mut rt, &h.model, now, Job::Nothing);
+        assert_eq!(
+            (look.verdict, look.to.as_str(), look.step, look.hold),
+            (
+                Follow::NotLoggedIn,
+                "pro",
+                FollowStep::Nothing,
+                Some(Hold::NotLoggedIn)
+            )
+        );
+
+        // Asked to be asked: nothing moves by itself.
+        h = h.edit(|state| {
+            state.workspaces[0].claude_account = Some("perso".into());
+            state.settings.account_switch_ask = true;
+        });
+        let look = account_follow(&mut rt, &h.model, now, Job::Nothing);
+        assert_eq!(
+            (look.verdict, look.step),
+            (Follow::Stay, FollowStep::Nothing)
+        );
+
+        // A shell has no account to follow.
+        let h = Harness::new(Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        let mut shell = mounted(&ws, &ws.panes[1]);
+        shell.status = PaneStatus::Running;
+        shell.account = Some("main".into());
+        let look = account_follow(&mut shell, &h.model, now, Job::Nothing);
+        assert_eq!(look.verdict, Follow::Stay);
+    }
+
+    /// An answer that nothing runs, read while the agent started a turn (and
+    /// maybe ended it: `ps` takes its time), is stale: the pane is asked
+    /// again instead of restarted.
+    #[test]
+    fn an_answer_older_than_the_last_turn_is_asked_again() {
+        use crate::state::live::{AgentActivity, PaneEvent};
+        use crate::workspace_dialog::testing::Harness;
+
+        let mut h = Harness::new(Locale::En, "graphite")
+            .edit(|state| state.workspaces[0].claude_account = Some("perso".into()));
+        h.model
+            .live
+            .panes_logic
+            .seed_activity("p1", "w1", AgentActivity::Yours);
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        rt.status = PaneStatus::Running;
+        rt.account = Some("main".into());
+        let now = Instant::now();
+        assert_eq!(
+            look_at(&mut rt, &h.model, now, Job::Unasked).1,
+            FollowStep::Ask
+        );
+        let mark = turn_mark(&h.model, "p1");
+
+        // A turn starts, and ends, before the process table answers.
+        h.model.live.panes_logic.seed_insight("p1", |insight| {
+            insight.events.insert(
+                0,
+                PaneEvent {
+                    at: 42,
+                    detail: PaneEventDetail::TurnStart,
+                },
+            );
+        });
+        assert_ne!(turn_mark(&h.model, "p1"), mark);
+        let job = job_answered(&mut rt, &h.model, mark, PaneJob::Nothing);
+        assert_eq!(job, Job::Unasked);
+        assert_eq!(
+            look_at(&mut rt, &h.model, now, job),
+            (Follow::Check, FollowStep::Ask, Some(Hold::Checking))
+        );
+        // Asked again from there, nothing runs: it moves.
+        let job = job_answered(
+            &mut rt,
+            &h.model,
+            turn_mark(&h.model, "p1"),
+            PaneJob::Nothing,
+        );
+        assert_eq!(look_at(&mut rt, &h.model, now, job).1, FollowStep::Restart);
+    }
+
+    /// A Claude Code on a node starts on the node's login, and its pane
+    /// reports main: whether its workspace lives on the node or it is a
+    /// worker sent there, it is never restarted toward an account of this
+    /// computer (it would come back on main, over and over).
+    #[test]
+    fn a_pane_on_a_node_never_moves_to_an_account_of_this_computer() {
+        use crate::state::live::AgentActivity;
+        use crate::workspace_dialog::testing::Harness;
+
+        let claude = |id: &str, node: Option<&str>| Pane {
+            id: id.into(),
+            name: id.into(),
+            agent: AgentId::Claude,
+            node: node.map(str::to_owned),
+            ..Pane::default()
+        };
+        let mut h = Harness::new(Locale::En, "graphite").edit(|state| {
+            state.settings.claude_account = Some("perso".into());
+            state.workspaces[0]
+                .panes
+                .push(claude("follow-sent", Some("n1")));
+            state.workspaces.push(Workspace {
+                id: "follow-on-node".into(),
+                name: "far".into(),
+                cwd: "/srv/far".into(),
+                node: Some("n1".into()),
+                panes: vec![claude("follow-far", None)],
+                ..Workspace::default()
+            });
+        });
+        let now = Instant::now();
+        for (ws, pane) in [("w1", "follow-sent"), ("follow-on-node", "follow-far")] {
+            h.model
+                .live
+                .panes_logic
+                .seed_activity(pane, ws, AgentActivity::Yours);
+            let (ws, pane) = find(&h.model, ws, pane).expect("the pane");
+            let mut rt = mounted(ws, pane);
+            assert!(rt.link.node().is_some(), "{} runs on its node", pane.id);
+            rt.status = PaneStatus::Running;
+            rt.account = Some("main".into());
+            assert!(!movable(&rt, pane));
+            let look = account_follow(&mut rt, &h.model, now, Job::Nothing);
+            assert_eq!(
+                (look.verdict, look.step, look.hold),
+                (Follow::Stay, FollowStep::Nothing, None)
+            );
+        }
+    }
+
+    /// The launch of a pane a move restarted resumes its conversation even
+    /// with `auto_resume` off, and says so; without a conversation to
+    /// resume, it says it started a new one.
+    #[test]
+    fn a_moved_pane_resumes_its_conversation_and_says_whether_it_did() {
+        use crate::workspace_dialog::testing::Harness;
+
+        let mut h = Harness::new(Locale::En, "graphite").edit(|state| {
+            state.settings.auto_resume = false;
+            state.workspaces[0].panes[0].session_id = Some("s-moved".into());
+        });
+        let ws = h.model.workspace("w1").expect("w1").clone();
+        let fresh_report = || SpawnReport {
+            account: Some("perso".into()),
+            resolved: Some("perso".into()),
+            ..report(Vec::new())
+        };
+
+        // Not moved: the setting decides, and it is off.
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        let _ = spawned(
+            &mut rt,
+            &mut h.model,
+            &HubChannel::default(),
+            Ok(fresh_report()),
+        );
+        assert!(rt.resume.is_none());
+
+        // Moved: resumed all the same.
+        let mut rt = mounted(&ws, &ws.panes[0]);
+        moved_in(&mut rt, Some("perso".into()));
+        let _ = spawned(
+            &mut rt,
+            &mut h.model,
+            &HubChannel::default(),
+            Ok(fresh_report()),
+        );
+        assert_eq!(rt.resume.as_deref(), Some("s-moved"));
+        assert_eq!(rt.moved_to.as_deref(), Some("perso"));
+        let tr = Translator::new(Locale::En);
+        let said = |key| tr.t_with(key, &args!("name" => "Perso")).into_owned();
+        assert_eq!(
+            moved_note(&h.model, rt.account.as_deref(), true),
+            said(Key::AccountsMovedNote)
+        );
+        // Its transcript is not found, or it never had a conversation.
+        assert_eq!(
+            moved_note(&h.model, rt.account.as_deref(), false),
+            said(Key::AccountsMovedNoteFresh)
+        );
+        assert_ne!(
+            said(Key::AccountsMovedNote),
+            said(Key::AccountsMovedNoteFresh)
+        );
     }
 
     /// A terminal nothing will measure (the chat view's) starts wide and tall

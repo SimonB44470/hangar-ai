@@ -15,8 +15,9 @@ use crate::ctx::Ctx;
 use crate::message::Message;
 use crate::services::Services;
 use crate::state::types::AgentId;
-use crate::state::{Model, Pane, Patch, Settings, StoreAction, Workspace};
+use crate::state::{AccountTone, Model, Pane, Patch, Settings, StoreAction, Workspace};
 
+use super::account_style::{self, Mark};
 use super::model::{AccountId, ClaudeAccount, MAIN_ACCOUNT, names_account, resolve_account};
 use super::{Msg, live};
 
@@ -157,6 +158,16 @@ fn forget_account(m: &mut Model, id: &str) {
     if forgotten.default {
         m.apply(StoreAction::UpdateSettings(Patch::new(
             |settings: &mut Settings| settings.claude_account = Some(MAIN_ACCOUNT.to_string()),
+        )));
+    }
+    // Its badge goes with it: an account added later under the same id
+    // starts plain.
+    if m.settings().account_styles.contains_key(id) {
+        let id = id.to_string();
+        m.apply(StoreAction::UpdateSettings(Patch::new(
+            move |settings: &mut Settings| {
+                settings.account_styles.remove(&id);
+            },
         )));
     }
 }
@@ -320,6 +331,26 @@ pub(super) fn step(page: &mut Page, m: &mut Model, msg: Msg) -> Task<Message> {
             )));
             Task::none()
         }
+        Msg::SetBadges(on) => {
+            m.apply(StoreAction::UpdateSettings(Patch::new(
+                move |settings: &mut Settings| settings.account_badges = on,
+            )));
+            Task::none()
+        }
+        Msg::SetTone(id, tone) => {
+            m.apply(StoreAction::UpdateSettings(Patch::new(
+                move |settings: &mut Settings| settings.set_account_tone(&id, tone),
+            )));
+            Task::none()
+        }
+        Msg::SetIcon(id, glyph) => {
+            m.apply(StoreAction::UpdateSettings(Patch::new(
+                move |settings: &mut Settings| {
+                    settings.set_account_icon(&id, glyph.map(Icon::name));
+                },
+            )));
+            Task::none()
+        }
         Msg::LogIn(id) => {
             open_login_pane(page, m, t, &id);
             Task::none()
@@ -416,7 +447,28 @@ pub fn view<'a>(page: &'a Page, ctx: Ctx<'a>) -> Element<'a, Message> {
         .map(|account| account_row(page, ctx, accounts, account, &default_id))
         .collect();
     body = body.push(form::group(t, rows));
+    // With a single account there is nothing to tell apart: no badge shows,
+    // so none is offered.
+    if accounts.len() >= 2 {
+        body = body.push(badges_switch(page, ctx));
+    }
     body = body.push(add_form(page, ctx, accounts));
+    // Only worth a word once there is another account to move to.
+    if accounts.len() > 1 {
+        let ask = ctx.model.settings().account_switch_ask;
+        body = body.push(form::group(
+            t,
+            vec![
+                form::row(
+                    t,
+                    ctx.t(Key::AccountsSettingsAskSwitch),
+                    input::switch(t, ask).on_toggle(|on| Message::Accounts(Msg::AskSwitch(on))),
+                )
+                .hint(ctx.t(Key::AccountsSettingsAskSwitchHint))
+                .into(),
+            ],
+        ));
+    }
 
     form::section(t, ctx.t(Key::AccountsSettingsTitle))
         .hint(ctx.t(Key::AccountsSettingsIntro))
@@ -493,6 +545,10 @@ fn account_row<'a>(
         },
     ));
 
+    if account_style::shown(ctx) {
+        lines = lines.push(badge_editor(page, ctx, account));
+    }
+
     let renaming = page
         .renaming
         .as_ref()
@@ -510,6 +566,87 @@ fn account_row<'a>(
         .padding(Padding::from([tokens::space::XL, tokens::space::XL]))
         .width(Length::Fill)
         .into()
+}
+
+/// Coloured badges, off by default: on, each account row offers a tone and
+/// an icon; off, the badges are the plain labels they always were and the
+/// choices made stay kept for when they are turned on again.
+fn badges_switch<'a>(page: &'a Page, ctx: Ctx<'a>) -> Element<'a, Message> {
+    let t = ctx.theme;
+    let mut switch = hangar_ui::input::switch(t, ctx.model.settings().account_badges)
+        .label(ctx.t(Key::AccountsSettingsBadges));
+    if !page.busy {
+        switch = switch.on_toggle(|on| press(Msg::SetBadges(on)));
+    }
+    column![
+        Element::from(switch),
+        typography::hint(t, ctx.t(Key::AccountsSettingsBadgesHint)),
+    ]
+    .spacing(tokens::space::XS)
+    .into()
+}
+
+/// How the account is marked: a choice of tone, each shown as the badge it
+/// makes, then a choice of icon, each named in its tooltip. What is chosen
+/// shows at once everywhere the account is named.
+fn badge_editor<'a>(
+    page: &'a Page,
+    ctx: Ctx<'a>,
+    account: &'a ClaudeAccount,
+) -> Element<'a, Message> {
+    let t = ctx.theme;
+    let current = account_style::of(ctx, &account.id);
+    let idle = !page.busy;
+
+    let mut tones = row![].spacing(tokens::space::XS).align_y(Alignment::Center);
+    for tone in std::iter::once(None).chain(AccountTone::ALL.into_iter().map(Some)) {
+        let name = match tone {
+            None => Key::AccountsSettingsToneNone,
+            Some(AccountTone::Accent) => Key::AccountsSettingsToneAccent,
+            Some(AccountTone::Success) => Key::AccountsSettingsToneSuccess,
+            Some(AccountTone::Warning) => Key::AccountsSettingsToneWarning,
+            Some(AccountTone::Danger) => Key::AccountsSettingsToneDanger,
+        };
+        let preview = account_style::label(
+            t,
+            Mark { tone, ..current },
+            account.label.clone(),
+            tokens::font_size::MICRO,
+            Some(t.colors.fg_secondary),
+        );
+        let choice = iced::widget::button(preview)
+            .padding(Padding::from([tokens::space::XXS, tokens::space::XS]))
+            .style(style::button::toggle(t, tone == current.tone))
+            .on_press_maybe(idle.then(|| press(Msg::SetTone(account.id.clone(), tone))));
+        tones = tones.push(hangar_ui::tip::bottom(t, choice, ctx.t(name)));
+    }
+
+    let mut icons = row![]
+        .spacing(tokens::space::XXS)
+        .align_y(Alignment::Center);
+    let none = iced::widget::button(
+        iced::widget::text(ctx.t(Key::AccountsSettingsIconNone)).size(tokens::font_size::LABEL),
+    )
+    .padding(Padding::from([tokens::space::XXS, tokens::space::SM]))
+    .style(style::button::toggle(t, current.icon.is_none()))
+    .on_press_maybe(idle.then(|| press(Msg::SetIcon(account.id.clone(), None))));
+    icons = icons.push(none);
+    for (glyph, name) in account_style::ICONS {
+        icons = icons.push(
+            ui_button::toggle_button(t, glyph, current.icon == Some(glyph))
+                .small()
+                .tip(ctx.t(name))
+                .on_press_maybe(idle.then(|| press(Msg::SetIcon(account.id.clone(), Some(glyph))))),
+        );
+    }
+
+    column![
+        typography::hint(t, ctx.t(Key::AccountsSettingsBadge)),
+        tones.wrap(),
+        icons.wrap(),
+    ]
+    .spacing(tokens::space::SM)
+    .into()
 }
 
 fn actions<'a>(

@@ -7,7 +7,9 @@
 //! accounts panes were launched on), `switch` (restart sets, usage, labels),
 //! `usage` (the usage cache on disk), `menu_items` (the lines of the
 //! navigator's and the pane's menus), `switcher` (the toolbar button),
-//! `badge`, `picker` (the workspace dialog's select) and `settings_page`
+//! `badge`, `account_style` (the tone and icon chosen for an account, drawn
+//! by every label that names one), `plan` (the plan block with a line per
+//! account), `picker` (the workspace dialog's select) and `settings_page`
 //! (Settings › Accounts).
 //!
 //! # What other packages call
@@ -21,9 +23,11 @@
 //!   usage counts against the account it was launched on, and "running" in
 //!   the switcher's question means "has noted an account".
 
+mod account_style;
 mod badge;
 mod menu_items;
 mod picker;
+mod plan;
 mod settings_page;
 mod switch;
 mod switcher;
@@ -50,6 +54,7 @@ pub use model::{
     AccountId, AccountSource, ClaudeAccount, LOGIN_COMMAND, Launched, MAIN_ACCOUNT,
     ResolvedAccount, launch_account, launch_account_with, read_account_choice, resolve_account,
 };
+pub use switch::{Follow, FollowInput, Job, Turn, follow};
 use switch::{
     SwitchPane, SwitchWorkspace, Usage, UsageMeasure, merge_usage,
     panes_to_restart_on_default_change, panes_to_restart_on_workspace_change, running_count,
@@ -97,6 +102,44 @@ pub struct Live {
     pub usage: Usage,
     /// The account each running Claude Code pane was launched on (P5 keeps it).
     pub launched: Launched,
+    /// The panes waiting to move to another account, and to which: their
+    /// header says so until they do (P5 keeps it, `switch::follow`).
+    pub moving: std::collections::HashMap<PaneId, Moving>,
+}
+
+/// A pane's move to another account, as its header shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moving {
+    pub to: AccountId,
+    /// What holds it back, which its header's tooltip says.
+    pub hold: Hold,
+}
+
+impl Moving {
+    /// `to` is not logged in: the pane stays where it is until it is.
+    pub fn blocked(&self) -> bool {
+        self.hold == Hold::NotLoggedIn
+    }
+}
+
+/// What holds a pane's move to another account back (`switch::follow`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Hold {
+    /// The account is not logged in: the pane stays.
+    NotLoggedIn,
+    /// Its agent is inside a turn: at work, or waiting on the person.
+    Turn,
+    /// Its turns are not reported: the hangar-bridge mod is not loaded, or
+    /// has said nothing yet.
+    Unreported,
+    /// Something typed in its prompt and not sent.
+    Draft,
+    /// Whether a command of its own still runs is being asked.
+    Checking,
+    /// A command its agent started still runs: what it is, shortened.
+    Command(String),
+    /// Its processes could not be read, so whether one runs is not known.
+    Unreadable,
 }
 
 /// The package's messages, routed by the shell as `Message::Accounts(Msg)`.
@@ -122,6 +165,9 @@ pub enum Msg {
     Decide(bool),
     /// Back from the question to the list.
     Back,
+    /// Settings › Accounts: ask before moving running agents, or let each
+    /// move by itself once it has nothing to lose (`follow`).
+    AskSwitch(bool),
 
     // Choosing an account for something, from a menu or a picker.
     SetWorkspace {
@@ -154,6 +200,12 @@ pub enum Msg {
     RemoveConfirm(AccountId),
     RemoveCancel,
     MakeDefault(AccountId),
+    /// Coloured badges turned on or off for every account.
+    SetBadges(bool),
+    /// The tone of an account's badge; `None` takes it back to plain.
+    SetTone(AccountId, Option<crate::state::AccountTone>),
+    /// The icon of an account's badge; `None` takes it off.
+    SetIcon(AccountId, Option<hangar_ui::Icon>),
     LogIn(AccountId),
     AddInput(String),
     AddSubmit,
@@ -161,6 +213,12 @@ pub enum Msg {
     Added(Result<AccountId, String>),
     Renamed(Result<(), String>),
     Removed(AccountId, Result<(), String>),
+}
+
+/// An account's label for a line written outside the views (a pane's note):
+/// its id when it is not listed.
+pub fn account_label(accounts: &[ClaudeAccount], id: &str) -> String {
+    switch::account_name(accounts, Some(id), id)
 }
 
 fn live<'a>(ctx: Ctx<'a>) -> &'a Live {
@@ -205,6 +263,7 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         | Msg::Decide(_)
         | Msg::Back) => switcher_step(st, m, menu),
 
+        Msg::AskSwitch(on) => set_ask_switch(m, on),
         Msg::SetWorkspace { ws, id, restart } => set_workspace_account(m, &ws, id, restart),
         Msg::SetDefault { id, restart } => set_default_account(m, id, restart),
         Msg::SetPane { ws, pane, id } => set_pane_account(m, &ws, &pane, id),
@@ -221,6 +280,9 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         | Msg::RemoveConfirm(_)
         | Msg::RemoveCancel
         | Msg::MakeDefault(_)
+        | Msg::SetBadges(_)
+        | Msg::SetTone(..)
+        | Msg::SetIcon(..)
         | Msg::LogIn(_)
         | Msg::AddInput(_)
         | Msg::AddSubmit
@@ -228,6 +290,13 @@ pub fn update(st: &mut State, m: &mut Model, sv: &Services, msg: Msg) -> Task<Me
         | Msg::Renamed(_)
         | Msg::Removed(..)) => settings_page::update(&mut st.page, m, sv, page),
     }
+}
+
+fn set_ask_switch(m: &mut Model, on: bool) -> Task<Message> {
+    m.apply(StoreAction::UpdateSettings(Patch::new(
+        move |settings: &mut Settings| settings.account_switch_ask = on,
+    )));
+    Task::none()
 }
 
 /// The switcher's popover: the list, and the question asked before a switch
@@ -246,7 +315,13 @@ fn switcher_step(st: &mut State, m: &mut Model, msg: Msg) -> Task<Message> {
             Task::none()
         }
         Msg::Choose { ws, id, scope } => {
-            let running = running_in(m, &ws, scope);
+            // Unasked, each pane follows on its own, once it has nothing to
+            // lose (`follow`, run by the panes).
+            let running = if m.settings().account_switch_ask {
+                running_in(m, &ws, scope)
+            } else {
+                0
+            };
             if running == 0 {
                 st.switcher = switcher::Menu::Closed;
                 return apply_switch(m, &ws, id, scope, false);
@@ -465,7 +540,10 @@ fn switch_workspace(workspace: &Workspace, live: &Live) -> SwitchWorkspace {
                     pane.agent.as_str().to_string()
                 },
                 claude_account: pane.claude_account.clone(),
-                running: live.launched.is_running(&pane.id),
+                // A pane on a node runs on the node's login: no account of
+                // this computer's to restart it on.
+                running: live.launched.is_running(&pane.id)
+                    && crate::nodes::away::node_of(workspace, pane).is_none(),
             })
             .collect(),
     }
@@ -517,16 +595,19 @@ fn apply_switch(
     }
 }
 
-/// The agents restart with their conversation: a respawn with no patch keeps
-/// the session. Always the person's call.
+/// The agents restart on their new account with their conversation, which
+/// the panes resume whatever `auto_resume` says, as for a move they make by
+/// themselves (`panes::Msg::MoveAccounts`). Asked of the person when
+/// `account_switch_ask` is on; when it is off, the panes move by themselves
+/// instead (`follow`).
 fn restart_task(ws: &WsId, panes: Vec<PaneId>) -> Task<Message> {
     if panes.is_empty() {
         return Task::none();
     }
-    Task::done(Message::Intent(Intent::RestartPanes {
-        ws: ws.clone(),
+    Task::done(Message::Panes(crate::panes::Msg::MoveAccounts(
+        ws.clone(),
         panes,
-    }))
+    )))
 }
 
 fn set_workspace_account(
@@ -590,14 +671,17 @@ fn set_folder_account(m: &mut Model, folder: String, id: Option<AccountId>) {
 }
 
 /// The person's pick in the pane's menu: a running agent restarts on it,
-/// conversation kept.
+/// conversation kept — at once when they asked to be asked
+/// (`account_switch_ask`), otherwise once it has nothing to lose (`follow`,
+/// run by the panes).
 fn set_pane_account(
     m: &mut Model,
     ws: &WsId,
     pane: &PaneId,
     id: Option<AccountId>,
 ) -> Task<Message> {
-    let running = m.live.accounts.launched.is_running(pane);
+    // Unasked, the pane moves on its own once it has nothing to lose.
+    let running = m.settings().account_switch_ask && m.live.accounts.launched.is_running(pane);
     m.apply(StoreAction::UpdatePane {
         ws: ws.clone(),
         pane: pane.clone(),
@@ -615,6 +699,12 @@ fn set_pane_account(
 /// The toolbar's account switcher (embedded by the toolbar).
 pub fn switcher<'a>(st: &'a State, ctx: Ctx<'a>) -> Element<'a, Message> {
     switcher::view(st, ctx)
+}
+
+/// The navigator's plan block with a line per account, when there are
+/// several and some have reported; `None` leaves the plain block.
+pub fn plan_block<'a>(ctx: Ctx<'a>) -> Option<Element<'a, Message>> {
+    plan::view(ctx)
 }
 
 /// A pane header's account badge.

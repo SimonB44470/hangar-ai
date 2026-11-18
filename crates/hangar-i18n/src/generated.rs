@@ -22,6 +22,28 @@ pub enum Key {
     AccountsMenuFolderTitle,
     /// `accounts.menu.title`
     AccountsMenuTitle,
+    /// `accounts.movedNote`
+    AccountsMovedNote,
+    /// `accounts.movedNoteFresh`
+    AccountsMovedNoteFresh,
+    /// `accounts.moving`
+    AccountsMoving,
+    /// `accounts.movingBlocked`
+    AccountsMovingBlocked,
+    /// `accounts.movingBlockedTitle`
+    AccountsMovingBlockedTitle,
+    /// `accounts.movingCommandTitle`
+    AccountsMovingCommandTitle,
+    /// `accounts.movingDraftTitle`
+    AccountsMovingDraftTitle,
+    /// `accounts.movingTitle`
+    AccountsMovingTitle,
+    /// `accounts.movingTurnTitle`
+    AccountsMovingTurnTitle,
+    /// `accounts.movingUnreadableTitle`
+    AccountsMovingUnreadableTitle,
+    /// `accounts.movingUnreportedTitle`
+    AccountsMovingUnreportedTitle,
     /// `accounts.pane.badgeTitle`
     AccountsPaneBadgeTitle,
     /// `accounts.pane.menuHeading`
@@ -44,12 +66,44 @@ pub enum Key {
     AccountsSettingsAddPlaceholder,
     /// `accounts.settings.addTitle`
     AccountsSettingsAddTitle,
+    /// `accounts.settings.askSwitch`
+    AccountsSettingsAskSwitch,
+    /// `accounts.settings.askSwitchHint`
+    AccountsSettingsAskSwitchHint,
+    /// `accounts.settings.badge`
+    AccountsSettingsBadge,
+    /// `accounts.settings.badges`
+    AccountsSettingsBadges,
+    /// `accounts.settings.badgesHint`
+    AccountsSettingsBadgesHint,
     /// `accounts.settings.cancel`
     AccountsSettingsCancel,
     /// `accounts.settings.default`
     AccountsSettingsDefault,
     /// `accounts.settings.failed`
     AccountsSettingsFailed,
+    /// `accounts.settings.iconBolt`
+    AccountsSettingsIconBolt,
+    /// `accounts.settings.iconBookmark`
+    AccountsSettingsIconBookmark,
+    /// `accounts.settings.iconCube`
+    AccountsSettingsIconCube,
+    /// `accounts.settings.iconFlag`
+    AccountsSettingsIconFlag,
+    /// `accounts.settings.iconFolder`
+    AccountsSettingsIconFolder,
+    /// `accounts.settings.iconGamepad`
+    AccountsSettingsIconGamepad,
+    /// `accounts.settings.iconLock`
+    AccountsSettingsIconLock,
+    /// `accounts.settings.iconMoon`
+    AccountsSettingsIconMoon,
+    /// `accounts.settings.iconNone`
+    AccountsSettingsIconNone,
+    /// `accounts.settings.iconTerminal`
+    AccountsSettingsIconTerminal,
+    /// `accounts.settings.iconWorkspace`
+    AccountsSettingsIconWorkspace,
     /// `accounts.settings.intro`
     AccountsSettingsIntro,
     /// `accounts.settings.listLabel`
@@ -86,6 +140,16 @@ pub enum Key {
     AccountsSettingsSetDefault,
     /// `accounts.settings.title`
     AccountsSettingsTitle,
+    /// `accounts.settings.toneAccent`
+    AccountsSettingsToneAccent,
+    /// `accounts.settings.toneDanger`
+    AccountsSettingsToneDanger,
+    /// `accounts.settings.toneNone`
+    AccountsSettingsToneNone,
+    /// `accounts.settings.toneSuccess`
+    AccountsSettingsToneSuccess,
+    /// `accounts.settings.toneWarning`
+    AccountsSettingsToneWarning,
     /// `accounts.settings.unsupportedBody`
     AccountsSettingsUnsupportedBody,
     /// `accounts.settings.unsupportedTitle`
@@ -110,6 +174,8 @@ pub enum Key {
     AccountsSwitcherMenu,
     /// `accounts.switcher.nextLaunch`
     AccountsSwitcherNextLaunch,
+    /// `accounts.switcher.noFigures`
+    AccountsSwitcherNoFigures,
     /// `accounts.switcher.notLoggedIn`
     AccountsSwitcherNotLoggedIn,
     /// `accounts.switcher.percent`
@@ -120,10 +186,6 @@ pub enum Key {
     AccountsSwitcherRestartHere,
     /// `accounts.switcher.running`
     AccountsSwitcherRunning,
-    /// `accounts.switcher.unknown`
-    AccountsSwitcherUnknown,
-    /// `accounts.switcher.usage`
-    AccountsSwitcherUsage,
     /// `accounts.switcher.useEverywhere`
     AccountsSwitcherUseEverywhere,
     /// `accounts.switcher.useEverywhereLabel`
@@ -132,6 +194,8 @@ pub enum Key {
     AccountsSwitcherUseHere,
     /// `accounts.switcher.week`
     AccountsSwitcherWeek,
+    /// `accounts.switcher.window`
+    AccountsSwitcherWindow,
     /// `activity.appStarted`
     ActivityAppStarted,
     /// `activity.appStopped`
@@ -3680,10 +3744,14 @@ pub enum Key {
     SidebarNoneWaiting,
     /// `sidebar.plan`
     SidebarPlan,
+    /// `sidebar.planAccountsHint`
+    SidebarPlanAccountsHint,
     /// `sidebar.planFiveHour`
     SidebarPlanFiveHour,
     /// `sidebar.planHint`
     SidebarPlanHint,
+    /// `sidebar.planNoFigures`
+    SidebarPlanNoFigures,
     /// `sidebar.planResetDate`
     SidebarPlanResetDate,
     /// `sidebar.planResetDay`
@@ -4451,7 +4519,7 @@ pub enum Key {
 }
 
 /// How many keys there are.
-pub const KEY_COUNT: usize = 2217;
+pub const KEY_COUNT: usize = 2251;
 
 impl Key {
     /// Every key, in the order of their ids.
@@ -4460,6 +4528,17 @@ impl Key {
         Key::AccountsMenuFolderNone,
         Key::AccountsMenuFolderTitle,
         Key::AccountsMenuTitle,
+        Key::AccountsMovedNote,
+        Key::AccountsMovedNoteFresh,
+        Key::AccountsMoving,
+        Key::AccountsMovingBlocked,
+        Key::AccountsMovingBlockedTitle,
+        Key::AccountsMovingCommandTitle,
+        Key::AccountsMovingDraftTitle,
+        Key::AccountsMovingTitle,
+        Key::AccountsMovingTurnTitle,
+        Key::AccountsMovingUnreadableTitle,
+        Key::AccountsMovingUnreportedTitle,
         Key::AccountsPaneBadgeTitle,
         Key::AccountsPaneMenuHeading,
         Key::AccountsPickerDefault,
@@ -4471,9 +4550,25 @@ impl Key {
         Key::AccountsSettingsAddName,
         Key::AccountsSettingsAddPlaceholder,
         Key::AccountsSettingsAddTitle,
+        Key::AccountsSettingsAskSwitch,
+        Key::AccountsSettingsAskSwitchHint,
+        Key::AccountsSettingsBadge,
+        Key::AccountsSettingsBadges,
+        Key::AccountsSettingsBadgesHint,
         Key::AccountsSettingsCancel,
         Key::AccountsSettingsDefault,
         Key::AccountsSettingsFailed,
+        Key::AccountsSettingsIconBolt,
+        Key::AccountsSettingsIconBookmark,
+        Key::AccountsSettingsIconCube,
+        Key::AccountsSettingsIconFlag,
+        Key::AccountsSettingsIconFolder,
+        Key::AccountsSettingsIconGamepad,
+        Key::AccountsSettingsIconLock,
+        Key::AccountsSettingsIconMoon,
+        Key::AccountsSettingsIconNone,
+        Key::AccountsSettingsIconTerminal,
+        Key::AccountsSettingsIconWorkspace,
         Key::AccountsSettingsIntro,
         Key::AccountsSettingsListLabel,
         Key::AccountsSettingsLogIn,
@@ -4492,6 +4587,11 @@ impl Key {
         Key::AccountsSettingsSave,
         Key::AccountsSettingsSetDefault,
         Key::AccountsSettingsTitle,
+        Key::AccountsSettingsToneAccent,
+        Key::AccountsSettingsToneDanger,
+        Key::AccountsSettingsToneNone,
+        Key::AccountsSettingsToneSuccess,
+        Key::AccountsSettingsToneWarning,
         Key::AccountsSettingsUnsupportedBody,
         Key::AccountsSettingsUnsupportedTitle,
         Key::AccountsSettingsUsedBy,
@@ -4504,17 +4604,17 @@ impl Key {
         Key::AccountsSwitcherHeading,
         Key::AccountsSwitcherMenu,
         Key::AccountsSwitcherNextLaunch,
+        Key::AccountsSwitcherNoFigures,
         Key::AccountsSwitcherNotLoggedIn,
         Key::AccountsSwitcherPercent,
         Key::AccountsSwitcherRestartEverywhere,
         Key::AccountsSwitcherRestartHere,
         Key::AccountsSwitcherRunning,
-        Key::AccountsSwitcherUnknown,
-        Key::AccountsSwitcherUsage,
         Key::AccountsSwitcherUseEverywhere,
         Key::AccountsSwitcherUseEverywhereLabel,
         Key::AccountsSwitcherUseHere,
         Key::AccountsSwitcherWeek,
+        Key::AccountsSwitcherWindow,
         Key::ActivityAppStarted,
         Key::ActivityAppStopped,
         Key::ActivityAsleep,
@@ -6289,8 +6389,10 @@ impl Key {
         Key::SidebarNoMatch,
         Key::SidebarNoneWaiting,
         Key::SidebarPlan,
+        Key::SidebarPlanAccountsHint,
         Key::SidebarPlanFiveHour,
         Key::SidebarPlanHint,
+        Key::SidebarPlanNoFigures,
         Key::SidebarPlanResetDate,
         Key::SidebarPlanResetDay,
         Key::SidebarPlanResetToday,
@@ -6682,6 +6784,17 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.menu.folderNone", en: Text::plain("None (the default)"), fr: Text::plain("Aucun (le défaut)") },
     Message { id: "accounts.menu.folderTitle", en: Text::plain("Account for its new workspaces"), fr: Text::plain("Compte de ses nouveaux workspaces") },
     Message { id: "accounts.menu.title", en: Text::plain("Claude account"), fr: Text::plain("Compte Claude") },
+    Message { id: "accounts.movedNote", en: Text::plain("Now on {name}, same conversation."), fr: Text::plain("Maintenant sur {name}, même conversation.") },
+    Message { id: "accounts.movedNoteFresh", en: Text::plain("Now on {name}, on a new conversation."), fr: Text::plain("Maintenant sur {name}, sur une nouvelle conversation.") },
+    Message { id: "accounts.moving", en: Text::plain("→ {name}"), fr: Text::plain("→ {name}") },
+    Message { id: "accounts.movingBlocked", en: Text::plain("{name}: not logged in"), fr: Text::plain("{name}\u{202f}: non connecté") },
+    Message { id: "accounts.movingBlockedTitle", en: Text::plain("{name} is not logged in, so this pane stays on its account: log it in from Settings › Accounts"), fr: Text::plain("{name} n’est pas connecté, ce panneau reste donc sur son compte\u{202f}: connecte-le depuis Réglages › Comptes") },
+    Message { id: "accounts.movingCommandTitle", en: Text::plain("Moves to {name} once its command is over: {command}"), fr: Text::plain("Passe sur {name} dès que sa commande est finie\u{202f}: {command}") },
+    Message { id: "accounts.movingDraftTitle", en: Text::plain("Moves to {name} once what is typed in it is sent, or left alone for 90\u{a0}s"), fr: Text::plain("Passe sur {name} dès que ce qui y est tapé est envoyé, ou laissé tel quel 90\u{a0}s") },
+    Message { id: "accounts.movingTitle", en: Text::plain("Moves to {name}, on the same conversation, once Hangar has checked that no command of its own still runs"), fr: Text::plain("Passe sur {name}, sur la même conversation, dès que Hangar a vérifié qu’aucune commande à lui ne tourne encore") },
+    Message { id: "accounts.movingTurnTitle", en: Text::plain("Moves to {name}, on the same conversation, once its turn is over"), fr: Text::plain("Passe sur {name}, sur la même conversation, dès que son tour est fini") },
+    Message { id: "accounts.movingUnreadableTitle", en: Text::plain("Moves to {name} once Hangar can tell that no command of its own runs: its processes could not be read"), fr: Text::plain("Passe sur {name} dès que Hangar peut voir qu’aucune commande à lui ne tourne\u{202f}: ses processus n’ont pas pu être lus") },
+    Message { id: "accounts.movingUnreportedTitle", en: Text::plain("Moves to {name} once its turn is known to be over: the hangar-bridge mod has not reported it (not loaded, or nothing said yet)"), fr: Text::plain("Passe sur {name} dès que la fin de son tour est connue\u{202f}: le mod hangar-bridge ne l’a pas signalée (pas chargé, ou rien dit encore)") },
     Message { id: "accounts.pane.badgeTitle", en: Text::plain("This agent runs on the “{name}” account, not its workspace’s"), fr: Text::plain("Cet agent tourne sur le compte «\u{202f}{name}\u{202f}», pas celui de son workspace") },
     Message { id: "accounts.pane.menuHeading", en: Text::plain("Claude account for this pane"), fr: Text::plain("Compte Claude de ce volet") },
     Message { id: "accounts.picker.default", en: Text::plain("Default ({name})"), fr: Text::plain("Par défaut ({name})") },
@@ -6693,9 +6806,25 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.settings.addName", en: Text::plain("Name"), fr: Text::plain("Nom") },
     Message { id: "accounts.settings.addPlaceholder", en: Text::plain("Work, Personal…"), fr: Text::plain("Travail, Perso…") },
     Message { id: "accounts.settings.addTitle", en: Text::plain("Add an account"), fr: Text::plain("Ajouter un compte") },
+    Message { id: "accounts.settings.askSwitch", en: Text::plain("Ask before moving running agents"), fr: Text::plain("Demander avant de déplacer les agents en cours") },
+    Message { id: "accounts.settings.askSwitchHint", en: Text::plain("Off, a running agent moves to its new account by itself, restarting on the same conversation, once Hangar knows it has nothing to lose: its turn over as the hangar-bridge mod reports it, nothing typed in it and not sent, no command of its own still running (a build, a watch). Until then its header reads “→ account”; without the mod, it waits. On, you are asked, and the agents restart at once."), fr: Text::plain("Désactivé, un agent en cours passe tout seul sur son nouveau compte, en redémarrant sur la même conversation, dès que Hangar sait qu’il n’a rien à perdre\u{202f}: son tour fini d’après le mod hangar-bridge, rien de tapé dedans sans être envoyé, plus aucune commande à lui en cours (un build, une surveillance). D’ici là, son en-tête affiche «\u{202f}→ compte\u{202f}»\u{202f}; sans le mod, il attend. Activé, la question est posée et les agents redémarrent tout de suite.") },
+    Message { id: "accounts.settings.badge", en: Text::plain("Badge, where the account is named"), fr: Text::plain("Badge, là où le compte est nommé") },
+    Message { id: "accounts.settings.badges", en: Text::plain("Colour the account badges"), fr: Text::plain("Colorer les badges des comptes") },
+    Message { id: "accounts.settings.badgesHint", en: Text::plain("Give each account a colour and an icon, to tell them apart at a glance. The toolbar's account button and its menu show them for every account, the default one included; the navigator and pane headers name only an account other than the default. Off, accounts keep their plain labels."), fr: Text::plain("Donne à chaque compte une couleur et une icône, pour les distinguer d'un coup d'œil. Le bouton du compte dans la barre d'outils et son menu les montrent pour chaque compte, celui par défaut compris\u{202f}; le navigateur et les en-têtes de volet ne nomment qu'un compte autre que celui par défaut. Désactivé, les comptes gardent leur libellé simple.") },
     Message { id: "accounts.settings.cancel", en: Text::plain("Cancel"), fr: Text::plain("Annuler") },
     Message { id: "accounts.settings.default", en: Text::plain("Default"), fr: Text::plain("Par défaut") },
     Message { id: "accounts.settings.failed", en: Text::plain("Could not do that: {detail}"), fr: Text::plain("Impossible\u{202f}: {detail}") },
+    Message { id: "accounts.settings.iconBolt", en: Text::plain("Bolt"), fr: Text::plain("Éclair") },
+    Message { id: "accounts.settings.iconBookmark", en: Text::plain("Bookmark"), fr: Text::plain("Signet") },
+    Message { id: "accounts.settings.iconCube", en: Text::plain("Cube"), fr: Text::plain("Cube") },
+    Message { id: "accounts.settings.iconFlag", en: Text::plain("Flag"), fr: Text::plain("Drapeau") },
+    Message { id: "accounts.settings.iconFolder", en: Text::plain("Folder"), fr: Text::plain("Dossier") },
+    Message { id: "accounts.settings.iconGamepad", en: Text::plain("Game controller"), fr: Text::plain("Manette") },
+    Message { id: "accounts.settings.iconLock", en: Text::plain("Lock"), fr: Text::plain("Cadenas") },
+    Message { id: "accounts.settings.iconMoon", en: Text::plain("Moon"), fr: Text::plain("Lune") },
+    Message { id: "accounts.settings.iconNone", en: Text::plain("No icon"), fr: Text::plain("Sans icône") },
+    Message { id: "accounts.settings.iconTerminal", en: Text::plain("Terminal"), fr: Text::plain("Terminal") },
+    Message { id: "accounts.settings.iconWorkspace", en: Text::plain("Workspace"), fr: Text::plain("Workspace") },
     Message { id: "accounts.settings.intro", en: Text::plain("Each account is a separate Claude subscription. Choose one per workspace; Hangar never switches on its own when a limit is reached."), fr: Text::plain("Chaque compte est un abonnement Claude distinct. Choisis-en un par workspace\u{202f}; Hangar ne bascule jamais tout seul quand une limite est atteinte.") },
     Message { id: "accounts.settings.listLabel", en: Text::plain("Accounts"), fr: Text::plain("Comptes") },
     Message { id: "accounts.settings.logIn", en: Text::plain("Log in"), fr: Text::plain("Se connecter") },
@@ -6714,6 +6843,11 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.settings.save", en: Text::plain("Save"), fr: Text::plain("Enregistrer") },
     Message { id: "accounts.settings.setDefault", en: Text::plain("Make default"), fr: Text::plain("Définir par défaut") },
     Message { id: "accounts.settings.title", en: Text::plain("Claude accounts"), fr: Text::plain("Comptes Claude") },
+    Message { id: "accounts.settings.toneAccent", en: Text::plain("Accent"), fr: Text::plain("Accent") },
+    Message { id: "accounts.settings.toneDanger", en: Text::plain("Red"), fr: Text::plain("Rouge") },
+    Message { id: "accounts.settings.toneNone", en: Text::plain("Plain"), fr: Text::plain("Sans couleur") },
+    Message { id: "accounts.settings.toneSuccess", en: Text::plain("Green"), fr: Text::plain("Vert") },
+    Message { id: "accounts.settings.toneWarning", en: Text::plain("Amber"), fr: Text::plain("Ambre") },
     Message { id: "accounts.settings.unsupportedBody", en: Text::plain("Logging in to one account here may log another one out. You may have to log in again after switching."), fr: Text::plain("Se connecter à un compte ici peut en déconnecter un autre. Tu devras peut-être te reconnecter après un changement.") },
     Message { id: "accounts.settings.unsupportedTitle", en: Text::plain("Logins are not kept apart on this computer"), fr: Text::plain("Les connexions ne sont pas séparées sur cet ordinateur") },
     Message { id: "accounts.settings.usedBy", en: Text::plain("Used by {names}"), fr: Text::plain("Utilisé par {names}") },
@@ -6726,17 +6860,17 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "accounts.switcher.heading", en: Text::plain("This workspace uses"), fr: Text::plain("Ce workspace utilise") },
     Message { id: "accounts.switcher.menu", en: Text::plain("Claude accounts"), fr: Text::plain("Comptes Claude") },
     Message { id: "accounts.switcher.nextLaunch", en: Text::plain("On next launch"), fr: Text::plain("Au prochain lancement") },
+    Message { id: "accounts.switcher.noFigures", en: Text::plain("no figures yet"), fr: Text::plain("pas encore de relevé") },
     Message { id: "accounts.switcher.notLoggedIn", en: Text::plain("not logged in"), fr: Text::plain("non connecté") },
     Message { id: "accounts.switcher.percent", en: Text::plain("{n}%"), fr: Text::plain("{n}\u{202f}%") },
     Message { id: "accounts.switcher.restartEverywhere", en: Text::plain("Restart the agents that follow the default now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents qui suivent le défaut (conversations conservées)") },
     Message { id: "accounts.switcher.restartHere", en: Text::plain("Restart this workspace’s agents now (conversations kept)"), fr: Text::plain("Redémarrer maintenant les agents de ce workspace (conversations conservées)") },
     Message { id: "accounts.switcher.running", en: Text::plural("{n} agent running.", "{n} agents running."), fr: Text::plural("{n} agent en cours.", "{n} agents en cours.") },
-    Message { id: "accounts.switcher.unknown", en: Text::plain("unknown"), fr: Text::plain("inconnu") },
-    Message { id: "accounts.switcher.usage", en: Text::plain("{five} {fiveValue} · {week} {weekValue}"), fr: Text::plain("{five} {fiveValue} · {week} {weekValue}") },
     Message { id: "accounts.switcher.useEverywhere", en: Text::plain("For every workspace"), fr: Text::plain("Pour tous les workspaces") },
     Message { id: "accounts.switcher.useEverywhereLabel", en: Text::plain("Make {name} the default for every workspace"), fr: Text::plain("Faire de {name} le compte par défaut de tous les workspaces") },
     Message { id: "accounts.switcher.useHere", en: Text::plain("Use {name} in this workspace"), fr: Text::plain("Utiliser {name} dans ce workspace") },
     Message { id: "accounts.switcher.week", en: Text::plain("week"), fr: Text::plain("semaine") },
+    Message { id: "accounts.switcher.window", en: Text::plain("{window} {value}"), fr: Text::plain("{window} {value}") },
     Message { id: "activity.appStarted", en: Text::plain("Hangar started"), fr: Text::plain("Hangar a démarré") },
     Message { id: "activity.appStopped", en: Text::plain("Hangar stopped"), fr: Text::plain("Hangar s'est arrêté") },
     Message { id: "activity.asleep", en: Text::plain("{name} fell asleep"), fr: Text::plain("{name}\u{a0}s'est endormi") },
@@ -8511,8 +8645,10 @@ pub(crate) static MESSAGES: [Message; KEY_COUNT] = [
     Message { id: "sidebar.noMatch", en: Text::plain("Nothing matches “{query}”."), fr: Text::plain("Rien ne correspond à «\u{202f}{query}\u{202f}».") },
     Message { id: "sidebar.noneWaiting", en: Text::plain("No agent is waiting for you."), fr: Text::plain("Aucun agent ne t'attend.") },
     Message { id: "sidebar.plan", en: Text::plain("Plan"), fr: Text::plain("Forfait") },
+    Message { id: "sidebar.planAccountsHint", en: Text::plain("Plan usage of each Claude account, as its panes last reported it"), fr: Text::plain("Consommation du forfait de chaque compte Claude, d'après le dernier relevé de ses volets") },
     Message { id: "sidebar.planFiveHour", en: Text::plain("5\u{a0}h"), fr: Text::plain("5\u{a0}h") },
     Message { id: "sidebar.planHint", en: Text::plain("Plan usage, as Claude Code last reported it"), fr: Text::plain("Consommation du forfait, d'après le dernier relevé de Claude Code") },
+    Message { id: "sidebar.planNoFigures", en: Text::plain("No figures yet"), fr: Text::plain("Pas encore de relevé") },
     Message { id: "sidebar.planResetDate", en: Text::plain("resets {date} at {time}"), fr: Text::plain("remise à zéro le {date} à {time}") },
     Message { id: "sidebar.planResetDay", en: Text::plain("resets {day} at {time}"), fr: Text::plain("remise à zéro {day} à {time}") },
     Message { id: "sidebar.planResetToday", en: Text::plain("resets at {time}"), fr: Text::plain("remise à zéro à {time}") },
